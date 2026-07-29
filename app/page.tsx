@@ -25,8 +25,7 @@ type StrategyResult = {
   threeR: number;
 };
 
-const monthOptions = buildMonthOptions("2026-07", 18);
-const initialMonth = monthOptions[0].key;
+const initialMonth = currentMonthKey();
 
 const sampleTrades: DraftTrade[] = [
   {
@@ -63,28 +62,28 @@ const sampleTrades: DraftTrade[] = [
   },
 ];
 
-function buildMonthOptions(startMonth: string, count: number) {
-  const [startYear, startMonthNumber] = startMonth.split("-").map(Number);
-  return Array.from({ length: count }, (_, index) => {
-    const date = new Date(Date.UTC(startYear, startMonthNumber - 1 + index, 1));
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-    const key = `${year}-${month}`;
+function currentMonthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
 
-    return {
-      key,
-      label: date.toLocaleDateString("en-US", {
-        month: "short",
-        year: "numeric",
-        timeZone: "UTC",
-      }),
-    };
+function shiftMonth(key: string, offset: number) {
+  const [year, month] = key.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(key: string) {
+  const [year, month] = key.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
   });
 }
 
-function defaultDraft(monthKey = initialMonth): DraftTrade {
+function defaultDraft(month = initialMonth): DraftTrade {
   return {
-    date: `${monthKey}-01`,
+    date: `${month}-01`,
     beHit: "Yes",
     firstTpR: 1,
     maxR: 1,
@@ -518,12 +517,17 @@ export default function Home() {
     .map((item, index) => radarPoint(index, radarScores.length, item.value))
     .join(" ");
   const maxStrategyTotal = Math.max(1, ...strategyRows.map((item) => Math.abs(item.total)));
+  const selectedMonthLabel = monthLabel(selectedMonth);
 
-  function selectMonth(key: string) {
+  function goToMonth(key: string) {
     setSelectedMonth(key);
     if (!editingId) {
       setDraft((current) => ({ ...current, date: `${key}-01` }));
     }
+  }
+
+  function moveMonth(offset: number) {
+    goToMonth(shiftMonth(selectedMonth, offset));
   }
 
   function updateDraft<K extends keyof DraftTrade>(field: K, value: DraftTrade[K]) {
@@ -771,29 +775,31 @@ export default function Home() {
         </article>
       </section>
 
-      <nav className="month-tabs" aria-label="Month tabs">
-        {monthOptions.map((month) => {
-          const count = trades.filter((trade) => monthKey(trade.date) === month.key).length;
-          return (
-            <button
-              className={selectedMonth === month.key ? "active" : ""}
-              key={month.key}
-              type="button"
-              onClick={() => selectMonth(month.key)}
-            >
-              <span>{month.label}</span>
-              <small>{count} trades</small>
-            </button>
-          );
-        })}
-      </nav>
+      <section className="month-navigator" aria-label="Month navigation">
+        <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
+          &lt;
+        </button>
+        <div className="month-current">
+          <span>Viewing month</span>
+          <strong>{selectedMonthLabel}</strong>
+          <small>
+            {rValue(monthlyStats.totalActual)} across {monthlyStats.trades} trades
+          </small>
+        </div>
+        <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
+          &gt;
+        </button>
+        <button className="utility-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
+          This month
+        </button>
+      </section>
 
       <section className="dashboard-grid" aria-label="Monthly dashboard">
         <article className="review-panel calendar-panel calendar-dominant">
           <div className="panel-heading compact">
             <div>
               <p className="eyebrow">Calendar</p>
-              <h2>{monthOptions.find((month) => month.key === selectedMonth)?.label} Actual R</h2>
+              <h2>{selectedMonthLabel} Actual R</h2>
             </div>
             <div className="month-summary">
               <span>
@@ -1016,7 +1022,7 @@ export default function Home() {
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Trade Log</p>
-              <h2 id="log-heading">{monthOptions.find((month) => month.key === selectedMonth)?.label}</h2>
+              <h2 id="log-heading">{selectedMonthLabel}</h2>
             </div>
             <div className="panel-actions">
               <button className="utility-button" type="button" onClick={() => void loadTrades()}>

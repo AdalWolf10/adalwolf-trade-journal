@@ -20,11 +20,16 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /First TP R/);
   assert.match(source, /Max R/);
   assert.match(source, /Actual R/);
+  assert.match(source, /Month navigation/);
+  assert.match(source, /This month/);
+  assert.match(source, /function shiftMonth/);
   assert.match(source, /Strategy Totals/);
   assert.match(source, /Daily Net Cumulative R/);
   assert.match(source, /trade days/);
   assert.match(source, /Export JSON/);
   assert.match(source, /Export CSV/);
+  assert.doesNotMatch(source, /buildMonthOptions/);
+  assert.doesNotMatch(source, /month-tabs/);
   assert.doesNotMatch(
     source,
     /Your site is taking shape|Building your site|codex-preview|react-loading-skeleton/i,
