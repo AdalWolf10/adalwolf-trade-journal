@@ -25,6 +25,38 @@ type StrategyResult = {
   threeR: number;
 };
 
+type TradeSortKey =
+  | "actualR"
+  | "beHit"
+  | "date"
+  | "day"
+  | "firstTpR"
+  | "firstTpResult"
+  | "maxR"
+  | "onePointFive"
+  | "threeR"
+  | "twoR";
+
+type SortDirection = "asc" | "desc";
+
+type TradeSort = {
+  direction: SortDirection;
+  key: TradeSortKey;
+};
+
+const sortableTradeColumns: Array<{ key: TradeSortKey; label: string }> = [
+  { key: "date", label: "Date" },
+  { key: "day", label: "Day" },
+  { key: "beHit", label: "BE" },
+  { key: "firstTpR", label: "First TP" },
+  { key: "maxR", label: "Max" },
+  { key: "actualR", label: "Actual" },
+  { key: "firstTpResult", label: "First TP" },
+  { key: "onePointFive", label: "1.5R" },
+  { key: "twoR", label: "2R" },
+  { key: "threeR", label: "3R" },
+];
+
 const initialMonth = currentMonthKey();
 
 const sampleTrades: DraftTrade[] = [
@@ -194,6 +226,46 @@ function strategyResult(trade: Pick<ExitTrade, "beHit" | "firstTpR" | "maxR">): 
     twoR: trade.maxR >= 2 ? 2 : 0,
     threeR: trade.maxR >= 3 ? 3 : 0,
   };
+}
+
+function tradeSortValue(trade: ExitTrade, key: TradeSortKey) {
+  const result = strategyResult(trade);
+  switch (key) {
+    case "actualR":
+      return trade.actualR;
+    case "beHit":
+      return trade.beHit;
+    case "date":
+      return trade.date;
+    case "day":
+      return dayName(trade.date);
+    case "firstTpR":
+      return trade.firstTpR;
+    case "firstTpResult":
+      return result.firstTp;
+    case "maxR":
+      return trade.maxR;
+    case "onePointFive":
+      return result.onePointFive;
+    case "threeR":
+      return result.threeR;
+    case "twoR":
+      return result.twoR;
+  }
+}
+
+function compareTradesForSort(left: ExitTrade, right: ExitTrade, sort: TradeSort) {
+  const leftValue = tradeSortValue(left, sort.key);
+  const rightValue = tradeSortValue(right, sort.key);
+  const direction = sort.direction === "asc" ? 1 : -1;
+  const primary =
+    typeof leftValue === "number" && typeof rightValue === "number"
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue));
+
+  return primary
+    ? primary * direction
+    : right.date.localeCompare(left.date) || (right.createdAt ?? 0) - (left.createdAt ?? 0);
 }
 
 function toCsv(trades: ExitTrade[]) {
@@ -849,6 +921,7 @@ export default function Home() {
   const [trades, setTrades] = useState<ExitTrade[]>([]);
   const [draft, setDraft] = useState<DraftTrade>(() => defaultDraft());
   const [selectedMonth, setSelectedMonth] = useState(initialMonth);
+  const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -900,15 +973,33 @@ export default function Home() {
     [selectedMonth, sortedTrades],
   );
 
+  const sortedMonthlyTrades = useMemo(
+    () => [...monthlyTrades].sort((left, right) => compareTradesForSort(left, right, tradeSort)),
+    [monthlyTrades, tradeSort],
+  );
+
   const monthTabs = useMemo(() => {
     const keys = new Set<string>();
-    for (let offset = -3; offset <= 3; offset += 1) {
-      keys.add(shiftMonth(selectedMonth, offset));
+    const orderedKeys: string[] = [];
+    const rememberMonth = (key: string) => {
+      keys.add(key);
+      if (!orderedKeys.includes(key)) {
+        orderedKeys.push(key);
+      }
+    };
+
+    rememberMonth(selectedMonth);
+    for (let offset = 1; offset <= 3; offset += 1) {
+      rememberMonth(shiftMonth(selectedMonth, offset));
     }
-    keys.add(currentMonthKey());
+    for (let offset = -1; offset >= -3; offset -= 1) {
+      rememberMonth(shiftMonth(selectedMonth, offset));
+    }
+    rememberMonth(currentMonthKey());
     trades.forEach((trade) => keys.add(monthKey(trade.date)));
 
-    return [...keys].sort().map((key) => ({
+    const remainingKeys = [...keys].filter((key) => !orderedKeys.includes(key)).sort();
+    return [...orderedKeys, ...remainingKeys].map((key) => ({
       count: trades.filter((trade) => monthKey(trade.date) === key).length,
       key,
       label: monthTabLabel(key),
@@ -1154,6 +1245,28 @@ export default function Home() {
     goToMonth(shiftMonth(selectedMonth, offset));
   }
 
+  function toggleTradeSort(key: TradeSortKey) {
+    setTradeSort((current) => ({
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+      key,
+    }));
+  }
+
+  function sortIndicator(key: TradeSortKey) {
+    if (tradeSort.key !== key) {
+      return "Sort";
+    }
+    return tradeSort.direction === "asc" ? "Asc" : "Desc";
+  }
+
+  function showDatePicker(input: HTMLInputElement) {
+    try {
+      input.showPicker?.();
+    } catch {
+      input.focus();
+    }
+  }
+
   function updateDraft<K extends keyof DraftTrade>(field: K, value: DraftTrade[K]) {
     setDraft((current) => {
       const next = { ...current, [field]: value };
@@ -1322,7 +1435,6 @@ export default function Home() {
         <div>
           <p className="eyebrow">Dashboard</p>
           <h1>Exit Strategy Journal</h1>
-          <p className="subtle-line">BE first. Targets next. Compare the exit, not the memory.</p>
         </div>
         <div className="topbar-actions">
           <button
@@ -1371,10 +1483,6 @@ export default function Home() {
           </button>
         </div>
       </header>
-
-      <p className="import-format-note">
-        Excel format: Date, BE Hit, First TP R, Max R, Actual R, Notes. BE Hit No saves Actual R as -1R.
-      </p>
 
       <section className="metric-grid" aria-label="Journal statistics">
         <article className="metric-card primary-metric">
@@ -1542,20 +1650,6 @@ export default function Home() {
             </div>
           </article>
 
-          <article className="review-panel curve-panel">
-            <div className="panel-heading compact">
-              <div>
-                <p className="eyebrow">Curve</p>
-                <h2>Daily Net Cumulative R</h2>
-              </div>
-            </div>
-            <svg className="curve-chart" role="img" viewBox="0 0 340 142">
-              <line className="curve-zero" x1="0" x2="340" y1={cumulativeChart.baseY} y2={cumulativeChart.baseY} />
-              <polygon className="curve-area" points={cumulativeChart.area} />
-              <polyline className="curve-line" points={cumulativeChart.pointList} />
-            </svg>
-          </article>
-
           <article className="review-panel exit-comparison-panel">
             <div className="panel-heading compact">
               <div>
@@ -1579,6 +1673,20 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          </article>
+
+          <article className="review-panel curve-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Curve</p>
+                <h2>Daily Net Cumulative R</h2>
+              </div>
+            </div>
+            <svg className="curve-chart" role="img" viewBox="0 0 340 142">
+              <line className="curve-zero" x1="0" x2="340" y1={cumulativeChart.baseY} y2={cumulativeChart.baseY} />
+              <polygon className="curve-area" points={cumulativeChart.area} />
+              <polyline className="curve-line" points={cumulativeChart.pointList} />
+            </svg>
           </article>
 
           <article className="review-panel">
@@ -1624,9 +1732,17 @@ export default function Home() {
               <label>
                 Date
                 <input
+                  className="date-picker-input"
                   type="date"
                   value={draft.date}
+                  onClick={(event) => showDatePicker(event.currentTarget)}
                   onChange={(event) => updateDraft("date", event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      showDatePicker(event.currentTarget);
+                    }
+                  }}
                 />
               </label>
               <label>
@@ -1733,22 +1849,24 @@ export default function Home() {
             <table className="trade-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Day</th>
-                  <th>BE</th>
-                  <th>First TP</th>
-                  <th>Max</th>
-                  <th>Actual</th>
-                  <th>First TP</th>
-                  <th>1.5R</th>
-                  <th>2R</th>
-                  <th>3R</th>
+                  {sortableTradeColumns.map((column) => (
+                    <th key={column.key}>
+                      <button
+                        className={`sort-header ${tradeSort.key === column.key ? "active" : ""}`}
+                        type="button"
+                        onClick={() => toggleTradeSort(column.key)}
+                      >
+                        {column.label}
+                        <span>{sortIndicator(column.key)}</span>
+                      </button>
+                    </th>
+                  ))}
                   <th>Notes</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {monthlyTrades.map((trade) => {
+                {sortedMonthlyTrades.map((trade) => {
                   const result = strategyResult(trade);
                   return (
                     <tr key={trade.id}>
@@ -1786,7 +1904,7 @@ export default function Home() {
                     </tr>
                   );
                 })}
-                {!monthlyTrades.length ? (
+                {!sortedMonthlyTrades.length ? (
                   <tr>
                     <td className="empty-row" colSpan={12}>
                       {isLoading ? "Loading trades..." : "No trades logged for this month yet."}

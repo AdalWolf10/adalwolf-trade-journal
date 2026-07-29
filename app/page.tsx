@@ -39,7 +39,6 @@ export default function Home() {
         <div className="login-brand">
           <p className="eyebrow">Private dashboard</p>
           <h1 id="login-heading">Welcome</h1>
-          <p className="subtle-line">Log in to open your personal trading journal.</p>
         </div>
 
         <form className="login-form" onSubmit={login}>

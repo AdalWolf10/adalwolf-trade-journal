@@ -135,13 +135,6 @@ input:disabled {
   line-height: 1.4;
 }
 
-.import-format-note {
-  margin: 10px 0 14px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.4;
-}
-
 .topbar {
   display: flex;
   align-items: center;
@@ -693,6 +686,7 @@ h2 {
 
 .comparison-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
 }
@@ -702,6 +696,7 @@ h2 {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 3px 10px;
   align-items: center;
+  min-height: 72px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #121419;
@@ -709,6 +704,7 @@ h2 {
 }
 
 .comparison-row.actual {
+  grid-column: 1 / -1;
   border-color: rgba(143, 103, 255, 0.64);
   background: linear-gradient(135deg, rgba(109, 82, 255, 0.22), rgba(18, 20, 25, 0.95));
 }
@@ -805,6 +801,10 @@ select {
   padding: 0 11px;
 }
 
+.date-picker-input {
+  cursor: pointer;
+}
+
 textarea {
   min-height: 104px;
   resize: vertical;
@@ -893,6 +893,36 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.sort-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.sort-header:hover,
+.sort-header.active {
+  color: var(--foreground);
+}
+
+.sort-header span {
+  color: #687083;
+  font-size: 0.64rem;
+  font-weight: 760;
+  text-transform: none;
+}
+
+.sort-header.active span {
+  color: var(--violet);
+}
+
 .trade-table th,
 .trade-table td {
   border-bottom: 1px solid var(--line);
@@ -972,6 +1002,10 @@ textarea:focus {
   .topbar-actions > *,
   .panel-actions > * {
     flex: 1;
+  }
+
+  .comparison-list {
+    grid-template-columns: 1fr;
   }
 
   h1 {

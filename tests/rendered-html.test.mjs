@@ -14,8 +14,6 @@ test("defines the exit strategy journal shell", async () => {
 
   assert.match(source, /Welcome/);
   assert.match(source, /Exit Strategy Journal/);
-  assert.match(source, /Log in to open your personal trading journal/);
-  assert.match(source, /BE first\. Targets next\./);
   assert.match(source, /Net Actual R/);
   assert.match(source, /Profit Factor/);
   assert.match(source, /Journal Score/);
@@ -32,8 +30,11 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /month-tabs/);
   assert.match(source, /Export Excel/);
   assert.match(source, /Excel Template/);
-  assert.match(source, /Excel format: Date, BE Hit, First TP R, Max R, Actual R, Notes/);
   assert.match(source, /parseXlsxTrades/);
+  assert.match(source, /showDatePicker/);
+  assert.match(source, /date-picker-input/);
+  assert.match(source, /sort-header/);
+  assert.match(source, /sortedMonthlyTrades/);
   assert.match(source, /Exit Comparison/);
   assert.match(source, /Strategy Totals/);
   assert.match(source, /Daily Net Cumulative R/);
@@ -41,6 +42,10 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /Export JSON/);
   assert.match(source, /Export CSV/);
   assert.doesNotMatch(source, /buildMonthOptions/);
+  assert.doesNotMatch(
+    source,
+    /Log in to open your personal trading journal|BE first\. Targets next\. Compare the exit, not the memory|Excel format: Date/,
+  );
   assert.doesNotMatch(
     source,
     /Your site is taking shape|Building your site|codex-preview|react-loading-skeleton/i,
