@@ -2,184 +2,189 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 
-type Trade = {
+type BeHit = "Yes" | "No";
+
+type ExitTrade = {
   id: string;
   date: string;
-  symbol: string;
-  direction: "Long" | "Short";
-  setup: string;
-  session: string;
-  risk: number;
-  pnl: number;
-  entry: number;
-  exit: number;
-  grade: "A" | "B" | "C";
+  beHit: BeHit;
+  firstTpR: number;
+  maxR: number;
+  actualR: number;
   notes: string;
-  tags: string[];
+  createdAt?: number;
+  updatedAt?: number;
 };
 
-type TradeForm = Omit<Trade, "id" | "tags"> & {
-  tags: string;
+type DraftTrade = Omit<ExitTrade, "id" | "createdAt" | "updatedAt">;
+
+type StrategyResult = {
+  firstTp: number;
+  onePointFive: number;
+  twoR: number;
+  threeR: number;
 };
 
-const storageKey = "trade-journal.entries.v1";
+const monthOptions = buildMonthOptions("2026-07", 18);
+const initialMonth = monthOptions[0].key;
 
-const sampleTrades: Trade[] = [
+const sampleTrades: DraftTrade[] = [
   {
-    id: "sample-1",
-    date: "2026-07-28",
-    symbol: "ES",
-    direction: "Long",
-    setup: "Opening range reclaim",
-    session: "New York AM",
-    risk: 250,
-    pnl: 560,
-    entry: 6374.25,
-    exit: 6380.75,
-    grade: "A",
-    notes: "Waited for the second hold above VWAP and scaled at target two.",
-    tags: ["patience", "vwap", "scale-out"],
+    date: "2026-07-06",
+    beHit: "Yes",
+    firstTpR: 1,
+    maxR: 1.7,
+    actualR: 0.8,
+    notes: "Reached first target and 1.5R, then faded before 2R.",
   },
   {
-    id: "sample-2",
-    date: "2026-07-25",
-    symbol: "NQ",
-    direction: "Short",
-    setup: "Failed breakout",
-    session: "New York AM",
-    risk: 300,
-    pnl: -210,
-    entry: 23184.5,
-    exit: 23202,
-    grade: "B",
-    notes: "Good read, early add was unnecessary after the first rejection.",
-    tags: ["breakout", "early-add"],
+    date: "2026-07-08",
+    beHit: "No",
+    firstTpR: 1,
+    maxR: 0.4,
+    actualR: -1,
+    notes: "Never protected the trade; full stop.",
   },
   {
-    id: "sample-3",
-    date: "2026-07-24",
-    symbol: "AAPL",
-    direction: "Long",
-    setup: "Daily flag continuation",
-    session: "Swing",
-    risk: 180,
-    pnl: 310,
-    entry: 213.4,
-    exit: 216.8,
-    grade: "A",
-    notes: "Clean structure, small size, no urge to micromanage.",
-    tags: ["daily", "continuation"],
+    date: "2026-07-10",
+    beHit: "Yes",
+    firstTpR: 1.1,
+    maxR: 3.2,
+    actualR: 2.1,
+    notes: "Runner reached 3R. Good patience after first TP.",
   },
   {
-    id: "sample-4",
-    date: "2026-07-23",
-    symbol: "TSLA",
-    direction: "Short",
-    setup: "Liquidity sweep",
-    session: "New York PM",
-    risk: 220,
-    pnl: -220,
-    entry: 319.2,
-    exit: 321.05,
-    grade: "C",
-    notes: "Entered before confirmation and ignored the slower tape.",
-    tags: ["impulse", "confirmation"],
-  },
-  {
-    id: "sample-5",
-    date: "2026-07-22",
-    symbol: "MES",
-    direction: "Long",
-    setup: "Pullback to prior high",
-    session: "New York AM",
-    risk: 120,
-    pnl: 195,
-    entry: 6342.25,
-    exit: 6346.75,
-    grade: "B",
-    notes: "Managed well after entry, but stop could have been tighter.",
-    tags: ["pullback", "prior-high"],
+    date: "2026-07-14",
+    beHit: "Yes",
+    firstTpR: 0.8,
+    maxR: 1.1,
+    actualR: 0,
+    notes: "BE protected the trade, but target selection was too tight.",
   },
 ];
 
-const emptyForm: TradeForm = {
-  date: new Date().toISOString().slice(0, 10),
-  symbol: "",
-  direction: "Long",
-  setup: "",
-  session: "New York AM",
-  risk: 100,
-  pnl: 0,
-  entry: 0,
-  exit: 0,
-  grade: "B",
-  notes: "",
-  tags: "",
-};
+function buildMonthOptions(startMonth: string, count: number) {
+  const [startYear, startMonthNumber] = startMonth.split("-").map(Number);
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(Date.UTC(startYear, startMonthNumber - 1 + index, 1));
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const key = `${year}-${month}`;
 
-function money(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
+    return {
+      key,
+      label: date.toLocaleDateString("en-US", {
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      }),
+    };
+  });
 }
 
-function decimal(value: number, digits = 2) {
-  return Number.isFinite(value) ? value.toFixed(digits) : "--";
+function defaultDraft(monthKey = initialMonth): DraftTrade {
+  return {
+    date: `${monthKey}-01`,
+    beHit: "Yes",
+    firstTpR: 1,
+    maxR: 1,
+    actualR: 0,
+    notes: "",
+  };
 }
 
-function makeId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
+function dayName(date: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  });
+}
+
+function monthKey(date: string) {
+  return date.slice(0, 7);
+}
+
+function daysInMonth(key: string) {
+  const [year, month] = key.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function firstWeekday(key: string) {
+  const [year, month] = key.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+}
+
+function rValue(value: number) {
+  return `${value >= 0 ? "" : "-"}${Math.abs(value).toFixed(2)}R`;
+}
+
+function percent(value: number) {
+  return Number.isFinite(value) ? `${value.toFixed(0)}%` : "--";
+}
+
+function toneClass(value: number) {
+  if (value > 0) {
+    return "positive";
+  }
+  if (value < 0) {
+    return "negative";
+  }
+  return "neutral";
+}
+
+function strategyResult(trade: Pick<ExitTrade, "beHit" | "firstTpR" | "maxR">): StrategyResult {
+  if (trade.beHit === "No") {
+    return {
+      firstTp: -1,
+      onePointFive: -1,
+      twoR: -1,
+      threeR: -1,
+    };
   }
 
-  return `trade-${Date.now()}`;
+  return {
+    firstTp: trade.maxR >= trade.firstTpR ? trade.firstTpR : 0,
+    onePointFive: trade.maxR >= 1.5 ? 1.5 : 0,
+    twoR: trade.maxR >= 2 ? 2 : 0,
+    threeR: trade.maxR >= 3 ? 3 : 0,
+  };
 }
 
-function normalizeTags(value: string) {
-  return value
-    .split(",")
-    .map((tag) => tag.trim().toLowerCase())
-    .filter(Boolean)
-    .slice(0, 5);
-}
-
-function toCsv(trades: Trade[]) {
+function toCsv(trades: ExitTrade[]) {
   const headers = [
     "date",
-    "symbol",
-    "direction",
-    "setup",
-    "session",
-    "risk",
-    "pnl",
-    "rMultiple",
-    "entry",
-    "exit",
-    "grade",
-    "tags",
+    "day",
+    "beHit",
+    "firstTpR",
+    "maxR",
+    "actualR",
+    "firstTpResult",
+    "onePointFiveResult",
+    "twoRResult",
+    "threeRResult",
     "notes",
   ];
 
   const escapeCell = (value: string | number) =>
     `"${String(value).replaceAll('"', '""')}"`;
 
-  const rows = trades.map((trade) => [
-    trade.date,
-    trade.symbol,
-    trade.direction,
-    trade.setup,
-    trade.session,
-    trade.risk,
-    trade.pnl,
-    decimal(trade.pnl / trade.risk),
-    trade.entry,
-    trade.exit,
-    trade.grade,
-    trade.tags.join(" | "),
-    trade.notes,
-  ]);
+  const rows = trades.map((trade) => {
+    const result = strategyResult(trade);
+    return [
+      trade.date,
+      dayName(trade.date),
+      trade.beHit,
+      trade.firstTpR,
+      trade.maxR,
+      trade.actualR,
+      result.firstTp,
+      result.onePointFive,
+      result.twoR,
+      result.threeR,
+      trade.notes,
+    ];
+  });
 
   return [headers, ...rows]
     .map((row) => row.map((cell) => escapeCell(cell)).join(","))
@@ -196,209 +201,383 @@ function downloadFile(filename: string, body: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function normalizeTrade(value: unknown): DraftTrade | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const trade = value as Partial<ExitTrade>;
+  const firstTpR = Number(trade.firstTpR);
+  const maxR = Number(trade.maxR);
+  const actualR = Number(trade.actualR);
+
+  if (
+    typeof trade.date !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(trade.date) ||
+    (trade.beHit !== "Yes" && trade.beHit !== "No") ||
+    !Number.isFinite(firstTpR) ||
+    firstTpR <= 0 ||
+    !Number.isFinite(maxR) ||
+    maxR < 0 ||
+    !Number.isFinite(actualR)
+  ) {
+    return null;
+  }
+
+  return {
+    date: trade.date,
+    beHit: trade.beHit,
+    firstTpR,
+    maxR,
+    actualR,
+    notes: typeof trade.notes === "string" ? trade.notes : "",
+  };
+}
+
 export default function Home() {
-  const [trades, setTrades] = useState<Trade[]>(sampleTrades);
-  const [form, setForm] = useState<TradeForm>(emptyForm);
-  const [query, setQuery] = useState("");
-  const [resultFilter, setResultFilter] = useState<"All" | "Wins" | "Losses">(
-    "All",
-  );
-  const [activeTag, setActiveTag] = useState("All");
-  const [hydrated, setHydrated] = useState(false);
+  const [trades, setTrades] = useState<ExitTrade[]>([]);
+  const [draft, setDraft] = useState<DraftTrade>(() => defaultDraft());
+  const [selectedMonth, setSelectedMonth] = useState(initialMonth);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  async function loadTrades() {
+    setIsLoading(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/trades", { cache: "no-store" });
+      const data = (await response.json()) as { trades?: ExitTrade[]; error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to load trades");
+      }
+      setTrades(data.trades ?? []);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to load trades");
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Trade[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setTrades(parsed);
-        }
-      }
-    } catch {
-      setTrades(sampleTrades);
-    } finally {
-      setHydrated(true);
-    }
+    void loadTrades();
   }, []);
 
-  useEffect(() => {
-    if (hydrated) {
-      localStorage.setItem(storageKey, JSON.stringify(trades));
-    }
-  }, [hydrated, trades]);
-
   const sortedTrades = useMemo(
-    () => [...trades].sort((a, b) => b.date.localeCompare(a.date)),
+    () =>
+      [...trades].sort((a, b) => {
+        const dateSort = b.date.localeCompare(a.date);
+        return dateSort || (b.createdAt ?? 0) - (a.createdAt ?? 0);
+      }),
     [trades],
   );
 
-  const allTags = useMemo(() => {
-    const tags = new Set<string>();
-    trades.forEach((trade) => trade.tags.forEach((tag) => tags.add(tag)));
-    return ["All", ...Array.from(tags).sort()];
-  }, [trades]);
+  const monthlyTrades = useMemo(
+    () => sortedTrades.filter((trade) => monthKey(trade.date) === selectedMonth),
+    [selectedMonth, sortedTrades],
+  );
 
-  const filteredTrades = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+  const strategyRows = useMemo(() => {
+    const strategies = [
+      {
+        key: "actual",
+        label: "Actual",
+        values: trades.map((trade) => trade.actualR),
+      },
+      {
+        key: "firstTp",
+        label: "First TP",
+        values: trades.map((trade) => strategyResult(trade).firstTp),
+      },
+      {
+        key: "onePointFive",
+        label: "1.5R",
+        values: trades.map((trade) => strategyResult(trade).onePointFive),
+      },
+      {
+        key: "twoR",
+        label: "2R",
+        values: trades.map((trade) => strategyResult(trade).twoR),
+      },
+      {
+        key: "threeR",
+        label: "3R",
+        values: trades.map((trade) => strategyResult(trade).threeR),
+      },
+    ];
 
-    return sortedTrades.filter((trade) => {
-      const matchesQuery =
-        !normalizedQuery ||
-        [
-          trade.symbol,
-          trade.setup,
-          trade.session,
-          trade.notes,
-          trade.tags.join(" "),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedQuery);
-      const matchesResult =
-        resultFilter === "All" ||
-        (resultFilter === "Wins" && trade.pnl > 0) ||
-        (resultFilter === "Losses" && trade.pnl < 0);
-      const matchesTag = activeTag === "All" || trade.tags.includes(activeTag);
-
-      return matchesQuery && matchesResult && matchesTag;
+    return strategies.map((strategy) => {
+      const total = strategy.values.reduce((sum, value) => sum + value, 0);
+      const wins = strategy.values.filter((value) => value > 0).length;
+      return {
+        ...strategy,
+        average: strategy.values.length ? total / strategy.values.length : 0,
+        total,
+        winRate: strategy.values.length ? (wins / strategy.values.length) * 100 : 0,
+      };
     });
-  }, [activeTag, query, resultFilter, sortedTrades]);
+  }, [trades]);
 
   const stats = useMemo(() => {
-    const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0);
-    const wins = trades.filter((trade) => trade.pnl > 0);
-    const losses = trades.filter((trade) => trade.pnl < 0);
-    const grossProfit = wins.reduce((sum, trade) => sum + trade.pnl, 0);
-    const grossLoss = Math.abs(losses.reduce((sum, trade) => sum + trade.pnl, 0));
-    const totalR = trades.reduce((sum, trade) => sum + trade.pnl / trade.risk, 0);
-    const avgR = trades.length ? totalR / trades.length : 0;
-    const winRate = trades.length ? (wins.length / trades.length) * 100 : 0;
-    const expectancy = trades.length ? totalPnl / trades.length : 0;
-    const bestTrade = trades.reduce(
-      (best, trade) => (trade.pnl > best.pnl ? trade : best),
-      trades[0] ?? sampleTrades[0],
+    const totalActual = trades.reduce((sum, trade) => sum + trade.actualR, 0);
+    const totalMax = trades.reduce((sum, trade) => sum + trade.maxR, 0);
+    const wins = trades.filter((trade) => trade.actualR > 0).length;
+    const avgMax = trades.length
+      ? trades.reduce((sum, trade) => sum + trade.maxR, 0) / trades.length
+      : 0;
+    const bestMethod = strategyRows.reduce(
+      (best, row) => (row.total > best.total ? row : best),
+      strategyRows[0] ?? { label: "Actual", total: 0 },
     );
 
-    let streak = 0;
-    let streakType = "No streak";
-    for (const trade of sortedTrades) {
-      if (trade.pnl === 0) {
-        break;
-      }
+    return {
+      avgActual: trades.length ? totalActual / trades.length : 0,
+      avgMax,
+      bestMethod,
+      captureRate: totalMax ? (totalActual / totalMax) * 100 : 0,
+      totalActual,
+      trades: trades.length,
+      winRate: trades.length ? (wins / trades.length) * 100 : 0,
+    };
+  }, [strategyRows, trades]);
 
-      const currentType = trade.pnl > 0 ? "Win" : "Loss";
-      if (streak === 0) {
-        streakType = currentType;
-        streak = 1;
-        continue;
-      }
-
-      if (streakType !== currentType) {
-        break;
-      }
-
-      streak += 1;
-    }
+  const monthlyStats = useMemo(() => {
+    const totalActual = monthlyTrades.reduce((sum, trade) => sum + trade.actualR, 0);
+    const totalMax = monthlyTrades.reduce((sum, trade) => sum + trade.maxR, 0);
+    const wins = monthlyTrades.filter((trade) => trade.actualR > 0).length;
+    const methodTotals = monthlyTrades.reduce(
+      (totals, trade) => {
+        const result = strategyResult(trade);
+        totals.firstTp += result.firstTp;
+        totals.onePointFive += result.onePointFive;
+        totals.twoR += result.twoR;
+        totals.threeR += result.threeR;
+        return totals;
+      },
+      { firstTp: 0, onePointFive: 0, twoR: 0, threeR: 0 },
+    );
+    const best = [
+      { label: "Actual", value: totalActual },
+      { label: "First TP", value: methodTotals.firstTp },
+      { label: "1.5R", value: methodTotals.onePointFive },
+      { label: "2R", value: methodTotals.twoR },
+      { label: "3R", value: methodTotals.threeR },
+    ].reduce((top, item) => (item.value > top.value ? item : top));
 
     return {
-      avgR,
-      bestTrade,
-      expectancy,
-      profitFactor: grossLoss ? grossProfit / grossLoss : grossProfit ? Infinity : 0,
-      streak,
-      streakType,
-      totalPnl,
-      trades: trades.length,
-      winRate,
+      best,
+      captureRate: totalMax ? (totalActual / totalMax) * 100 : 0,
+      totalActual,
+      trades: monthlyTrades.length,
+      winRate: monthlyTrades.length ? (wins / monthlyTrades.length) * 100 : 0,
     };
-  }, [sortedTrades, trades]);
+  }, [monthlyTrades]);
 
-  const setupBreakdown = useMemo(() => {
-    const map = new Map<string, { count: number; pnl: number }>();
-    trades.forEach((trade) => {
-      const current = map.get(trade.setup) ?? { count: 0, pnl: 0 };
-      map.set(trade.setup, {
-        count: current.count + 1,
-        pnl: current.pnl + trade.pnl,
-      });
-    });
+  const calendarCells = useMemo(() => {
+    const lead = firstWeekday(selectedMonth);
+    const days = daysInMonth(selectedMonth);
+    const cells: Array<{ day: number | null; date: string; total: number; count: number }> = [];
 
-    return Array.from(map.entries())
-      .map(([setup, value]) => ({ setup, ...value }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-  }, [trades]);
-
-  const maxSetupCount = Math.max(1, ...setupBreakdown.map((item) => item.count));
-
-  function updateField<K extends keyof TradeForm>(field: K, value: TradeForm[K]) {
-    setForm((current) => ({ ...current, [field]: value }));
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const nextTrade: Trade = {
-      ...form,
-      id: makeId(),
-      symbol: form.symbol.trim().toUpperCase(),
-      setup: form.setup.trim(),
-      session: form.session.trim(),
-      notes: form.notes.trim(),
-      risk: Math.max(1, Number(form.risk)),
-      pnl: Number(form.pnl),
-      entry: Number(form.entry),
-      exit: Number(form.exit),
-      tags: normalizeTags(form.tags),
-    };
-
-    if (!nextTrade.symbol || !nextTrade.setup) {
-      return;
+    for (let index = 0; index < lead; index += 1) {
+      cells.push({ day: null, date: "", total: 0, count: 0 });
     }
 
-    setTrades((current) => [nextTrade, ...current]);
-    setForm({
-      ...emptyForm,
-      date: nextTrade.date,
-      session: nextTrade.session,
-      risk: nextTrade.risk,
+    for (let day = 1; day <= days; day += 1) {
+      const date = `${selectedMonth}-${String(day).padStart(2, "0")}`;
+      const dayTrades = monthlyTrades.filter((trade) => trade.date === date);
+      cells.push({
+        day,
+        date,
+        total: dayTrades.reduce((sum, trade) => sum + trade.actualR, 0),
+        count: dayTrades.length,
+      });
+    }
+
+    while (cells.length < 42 || cells.length % 7 !== 0) {
+      cells.push({ day: null, date: "", total: 0, count: 0 });
+    }
+
+    return cells;
+  }, [monthlyTrades, selectedMonth]);
+
+  const weeklyRows = useMemo(
+    () =>
+      Array.from({ length: calendarCells.length / 7 }, (_, week) => {
+        const weekCells = calendarCells.slice(week * 7, week * 7 + 7);
+        const activeDays = weekCells.filter((cell) => cell.count > 0);
+        return {
+          label: `Week ${week + 1}`,
+          total: activeDays.reduce((sum, cell) => sum + cell.total, 0),
+          tradeDays: activeDays.length,
+        };
+      }),
+    [calendarCells],
+  );
+
+  function selectMonth(key: string) {
+    setSelectedMonth(key);
+    if (!editingId) {
+      setDraft((current) => ({ ...current, date: `${key}-01` }));
+    }
+  }
+
+  function updateDraft<K extends keyof DraftTrade>(field: K, value: DraftTrade[K]) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function resetForm(month = selectedMonth) {
+    setDraft(defaultDraft(month));
+    setEditingId(null);
+  }
+
+  async function saveTrade(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setNotice("");
+
+    try {
+      const endpoint = editingId ? `/api/trades?id=${encodeURIComponent(editingId)}` : "/api/trades";
+      const response = await fetch(endpoint, {
+        method: editingId ? "PUT" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      const data = (await response.json()) as { trade?: ExitTrade; error?: string };
+      if (!response.ok || !data.trade) {
+        throw new Error(data.error ?? "Unable to save trade");
+      }
+
+      setTrades((current) =>
+        editingId
+          ? current.map((trade) => (trade.id === data.trade?.id ? data.trade : trade))
+          : [data.trade as ExitTrade, ...current],
+      );
+      setSelectedMonth(monthKey(data.trade.date));
+      resetForm(monthKey(data.trade.date));
+      setNotice(editingId ? "Trade updated." : "Trade added.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to save trade");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function editTrade(trade: ExitTrade) {
+    setEditingId(trade.id);
+    setDraft({
+      date: trade.date,
+      beHit: trade.beHit,
+      firstTpR: trade.firstTpR,
+      maxR: trade.maxR,
+      actualR: trade.actualR,
+      notes: trade.notes,
     });
+    setSelectedMonth(monthKey(trade.date));
   }
 
-  function deleteTrade(id: string) {
-    setTrades((current) => current.filter((trade) => trade.id !== id));
+  async function deleteTrade(id: string) {
+    setNotice("");
+    try {
+      const response = await fetch(`/api/trades?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to delete trade");
+      }
+      setTrades((current) => current.filter((trade) => trade.id !== id));
+      if (editingId === id) {
+        resetForm();
+      }
+      setNotice("Trade deleted.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to delete trade");
+    }
   }
 
-  function handleImport(event: ChangeEvent<HTMLInputElement>) {
+  async function addSampleTrades() {
+    setIsSaving(true);
+    setNotice("");
+    try {
+      const saved: ExitTrade[] = [];
+      for (const trade of sampleTrades) {
+        const response = await fetch("/api/trades", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(trade),
+        });
+        const data = (await response.json()) as { trade?: ExitTrade; error?: string };
+        if (!response.ok || !data.trade) {
+          throw new Error(data.error ?? "Unable to add sample trades");
+        }
+        saved.push(data.trade);
+      }
+      setTrades((current) => [...saved, ...current]);
+      setSelectedMonth("2026-07");
+      setNotice("Sample trades added.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to add sample trades");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
+      setIsSaving(true);
+      setNotice("");
       try {
-        const parsed = JSON.parse(String(reader.result)) as Trade[];
-        if (Array.isArray(parsed)) {
-          setTrades(parsed);
-          setActiveTag("All");
-          setResultFilter("All");
-          setQuery("");
+        const parsed = JSON.parse(String(reader.result)) as unknown;
+        const rawTrades = Array.isArray(parsed)
+          ? parsed
+          : parsed && typeof parsed === "object" && "trades" in parsed
+            ? (parsed as { trades?: unknown[] }).trades ?? []
+            : [];
+        const normalized = rawTrades.map(normalizeTrade).filter((trade): trade is DraftTrade => !!trade);
+
+        if (!normalized.length) {
+          throw new Error("No valid trades found in that JSON file.");
         }
-      } catch {
+
+        for (const trade of normalized) {
+          const response = await fetch("/api/trades", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(trade),
+          });
+          if (!response.ok) {
+            const data = (await response.json()) as { error?: string };
+            throw new Error(data.error ?? "Unable to import trades");
+          }
+        }
+
+        await loadTrades();
+        setNotice(`${normalized.length} trades imported.`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Unable to import trades");
+      } finally {
+        setIsSaving(false);
         event.target.value = "";
       }
     };
     reader.readAsText(file);
   }
 
+  const formStrategy = strategyResult(draft);
+
   return (
     <main className="journal-shell">
-      <header className="topbar" aria-label="Trade journal header">
+      <header className="topbar" aria-label="Exit strategy journal header">
         <div>
-          <p className="eyebrow">Personal trading workspace</p>
-          <h1>Trade Journal</h1>
+          <p className="eyebrow">Personal exit workspace</p>
+          <h1>Exit Strategy Journal</h1>
         </div>
         <div className="topbar-actions">
           <button
@@ -406,8 +585,8 @@ export default function Home() {
             type="button"
             onClick={() =>
               downloadFile(
-                "trade-journal.json",
-                JSON.stringify(trades, null, 2),
+                "exit-strategy-journal.json",
+                JSON.stringify({ trades: sortedTrades }, null, 2),
                 "application/json",
               )
             }
@@ -417,7 +596,7 @@ export default function Home() {
           <button
             className="utility-button"
             type="button"
-            onClick={() => downloadFile("trade-journal.csv", toCsv(trades), "text/csv")}
+            onClick={() => downloadFile("exit-strategy-journal.csv", toCsv(sortedTrades), "text/csv")}
           >
             Export CSV
           </button>
@@ -428,230 +607,185 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="metric-grid" aria-label="Trading statistics">
+      <section className="metric-grid" aria-label="Journal statistics">
         <article className="metric-card">
-          <span>Total P/L</span>
-          <strong className={stats.totalPnl >= 0 ? "positive" : "negative"}>
-            {money(stats.totalPnl)}
-          </strong>
+          <span>Total Actual R</span>
+          <strong className={toneClass(stats.totalActual)}>{rValue(stats.totalActual)}</strong>
         </article>
         <article className="metric-card">
           <span>Win Rate</span>
-          <strong>{decimal(stats.winRate, 0)}%</strong>
+          <strong>{percent(stats.winRate)}</strong>
         </article>
         <article className="metric-card">
-          <span>Average R</span>
-          <strong className={stats.avgR >= 0 ? "positive" : "negative"}>
-            {decimal(stats.avgR)}
-          </strong>
+          <span>Average Max R</span>
+          <strong>{rValue(stats.avgMax)}</strong>
         </article>
         <article className="metric-card">
-          <span>Expectancy</span>
-          <strong className={stats.expectancy >= 0 ? "positive" : "negative"}>
-            {money(stats.expectancy)}
-          </strong>
+          <span>Capture Rate</span>
+          <strong className={toneClass(stats.captureRate)}>{percent(stats.captureRate)}</strong>
         </article>
         <article className="metric-card">
-          <span>Profit Factor</span>
-          <strong>{stats.profitFactor === Infinity ? "--" : decimal(stats.profitFactor)}</strong>
+          <span>Best Method</span>
+          <strong>{stats.bestMethod.label}</strong>
         </article>
         <article className="metric-card">
-          <span>Current Streak</span>
-          <strong>
-            {stats.streak ? `${stats.streak} ${stats.streakType}` : "Flat"}
-          </strong>
+          <span>Total Trades</span>
+          <strong>{stats.trades}</strong>
         </article>
       </section>
 
+      <nav className="month-tabs" aria-label="Month tabs">
+        {monthOptions.map((month) => {
+          const count = trades.filter((trade) => monthKey(trade.date) === month.key).length;
+          return (
+            <button
+              className={selectedMonth === month.key ? "active" : ""}
+              key={month.key}
+              type="button"
+              onClick={() => selectMonth(month.key)}
+            >
+              <span>{month.label}</span>
+              <small>{count}</small>
+            </button>
+          );
+        })}
+      </nav>
+
       <div className="workspace-grid">
-        <section className="entry-panel" aria-labelledby="new-trade-heading">
+        <section className="entry-panel" aria-labelledby="entry-heading">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Execution</p>
-              <h2 id="new-trade-heading">New Trade</h2>
+              <p className="eyebrow">Entry</p>
+              <h2 id="entry-heading">{editingId ? "Edit Trade" : "New Trade"}</h2>
             </div>
-            <span className="status-pill">{stats.trades} logged</span>
+            <span className="status-pill">{selectedMonth}</span>
           </div>
 
-          <form className="trade-form" onSubmit={handleSubmit}>
+          <form className="trade-form" onSubmit={saveTrade}>
             <div className="field-row">
               <label>
                 Date
                 <input
                   type="date"
-                  value={form.date}
-                  onChange={(event) => updateField("date", event.target.value)}
+                  value={draft.date}
+                  onChange={(event) => updateDraft("date", event.target.value)}
                 />
               </label>
               <label>
-                Symbol
-                <input
-                  placeholder="ES"
-                  value={form.symbol}
-                  onChange={(event) => updateField("symbol", event.target.value)}
-                />
-              </label>
-            </div>
-
-            <div className="field-row">
-              <label>
-                Direction
+                BE Hit?
                 <select
-                  value={form.direction}
-                  onChange={(event) =>
-                    updateField("direction", event.target.value as TradeForm["direction"])
-                  }
+                  value={draft.beHit}
+                  onChange={(event) => updateDraft("beHit", event.target.value as BeHit)}
                 >
-                  <option>Long</option>
-                  <option>Short</option>
-                </select>
-              </label>
-              <label>
-                Grade
-                <select
-                  value={form.grade}
-                  onChange={(event) =>
-                    updateField("grade", event.target.value as TradeForm["grade"])
-                  }
-                >
-                  <option>A</option>
-                  <option>B</option>
-                  <option>C</option>
+                  <option>Yes</option>
+                  <option>No</option>
                 </select>
               </label>
             </div>
 
-            <label>
-              Setup
-              <input
-                placeholder="Opening range reclaim"
-                value={form.setup}
-                onChange={(event) => updateField("setup", event.target.value)}
-              />
-            </label>
-
-            <label>
-              Session
-              <input
-                placeholder="New York AM"
-                value={form.session}
-                onChange={(event) => updateField("session", event.target.value)}
-              />
-            </label>
-
             <div className="field-row">
               <label>
-                Risk
+                First TP R
                 <input
-                  min="1"
-                  step="1"
+                  min="0.1"
+                  step="0.1"
                   type="number"
-                  value={form.risk}
-                  onChange={(event) => updateField("risk", Number(event.target.value))}
+                  value={draft.firstTpR}
+                  onChange={(event) => updateDraft("firstTpR", Number(event.target.value))}
                 />
               </label>
               <label>
-                P/L
+                Max R
                 <input
-                  step="1"
+                  min="0"
+                  step="0.1"
                   type="number"
-                  value={form.pnl}
-                  onChange={(event) => updateField("pnl", Number(event.target.value))}
+                  value={draft.maxR}
+                  onChange={(event) => updateDraft("maxR", Number(event.target.value))}
+                />
+              </label>
+              <label>
+                Actual R
+                <input
+                  step="0.1"
+                  type="number"
+                  value={draft.actualR}
+                  onChange={(event) => updateDraft("actualR", Number(event.target.value))}
                 />
               </label>
             </div>
-
-            <div className="field-row">
-              <label>
-                Entry
-                <input
-                  step="0.01"
-                  type="number"
-                  value={form.entry}
-                  onChange={(event) => updateField("entry", Number(event.target.value))}
-                />
-              </label>
-              <label>
-                Exit
-                <input
-                  step="0.01"
-                  type="number"
-                  value={form.exit}
-                  onChange={(event) => updateField("exit", Number(event.target.value))}
-                />
-              </label>
-            </div>
-
-            <label>
-              Tags
-              <input
-                placeholder="patience, vwap"
-                value={form.tags}
-                onChange={(event) => updateField("tags", event.target.value)}
-              />
-            </label>
 
             <label>
               Notes
               <textarea
                 rows={4}
-                value={form.notes}
-                onChange={(event) => updateField("notes", event.target.value)}
+                value={draft.notes}
+                onChange={(event) => updateDraft("notes", event.target.value)}
               />
             </label>
 
-            <button className="primary-button" type="submit">
-              Add Trade
+            <div className="formula-preview" aria-label="Strategy result preview">
+              <span>First TP {rValue(formStrategy.firstTp)}</span>
+              <span>1.5R {rValue(formStrategy.onePointFive)}</span>
+              <span>2R {rValue(formStrategy.twoR)}</span>
+              <span>3R {rValue(formStrategy.threeR)}</span>
+            </div>
+
+            <button className="primary-button" disabled={isSaving} type="submit">
+              {isSaving ? "Saving..." : editingId ? "Save Trade" : "Add Trade"}
             </button>
+            {editingId ? (
+              <button className="utility-button" type="button" onClick={() => resetForm()}>
+                Cancel Edit
+              </button>
+            ) : null}
           </form>
+
+          <div className="rule-note">
+            <strong>BE gate:</strong> No means every planned strategy is -1R. Yes means
+            Max R decides which targets were reached; missed targets count 0R.
+          </div>
+
+          {notice ? <p className="notice">{notice}</p> : null}
         </section>
 
-        <section className="log-panel" aria-labelledby="trade-log-heading">
+        <section className="log-panel" aria-labelledby="log-heading">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Review</p>
-              <h2 id="trade-log-heading">Trade Log</h2>
+              <p className="eyebrow">Month Log</p>
+              <h2 id="log-heading">{monthOptions.find((month) => month.key === selectedMonth)?.label}</h2>
             </div>
-            <button className="utility-button" type="button" onClick={() => setTrades(sampleTrades)}>
-              Reset Sample
-            </button>
-          </div>
-
-          <div className="filters">
-            <label className="search-field">
-              Search
-              <input
-                placeholder="Symbol, setup, tag"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </label>
-
-            <div className="segmented-control" aria-label="Result filter">
-              {(["All", "Wins", "Losses"] as const).map((filter) => (
-                <button
-                  className={resultFilter === filter ? "active" : ""}
-                  key={filter}
-                  type="button"
-                  onClick={() => setResultFilter(filter)}
-                >
-                  {filter}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="tag-strip" aria-label="Tag filter">
-            {allTags.map((tag) => (
-              <button
-                className={activeTag === tag ? "active" : ""}
-                key={tag}
-                type="button"
-                onClick={() => setActiveTag(tag)}
-              >
-                {tag}
+            <div className="panel-actions">
+              <button className="utility-button" type="button" onClick={() => void loadTrades()}>
+                Refresh
               </button>
-            ))}
+              <button
+                className="utility-button"
+                disabled={isSaving}
+                type="button"
+                onClick={() => void addSampleTrades()}
+              >
+                Add Sample
+              </button>
+            </div>
+          </div>
+
+          <div className="month-summary">
+            <span>
+              Trades <strong>{monthlyStats.trades}</strong>
+            </span>
+            <span>
+              Actual <strong className={toneClass(monthlyStats.totalActual)}>{rValue(monthlyStats.totalActual)}</strong>
+            </span>
+            <span>
+              Win Rate <strong>{percent(monthlyStats.winRate)}</strong>
+            </span>
+            <span>
+              Capture <strong>{percent(monthlyStats.captureRate)}</strong>
+            </span>
+            <span>
+              Best <strong>{monthlyStats.best.label}</strong>
+            </span>
           </div>
 
           <div className="trade-table-wrap">
@@ -659,103 +793,147 @@ export default function Home() {
               <thead>
                 <tr>
                   <th>Date</th>
-                  <th>Symbol</th>
-                  <th>Setup</th>
-                  <th>R</th>
-                  <th>P/L</th>
-                  <th>Grade</th>
+                  <th>Day</th>
+                  <th>BE</th>
+                  <th>First TP</th>
+                  <th>Max</th>
+                  <th>Actual</th>
+                  <th>First TP</th>
+                  <th>1.5R</th>
+                  <th>2R</th>
+                  <th>3R</th>
+                  <th>Notes</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {filteredTrades.map((trade) => {
-                  const rMultiple = trade.pnl / trade.risk;
+                {monthlyTrades.map((trade) => {
+                  const result = strategyResult(trade);
                   return (
                     <tr key={trade.id}>
                       <td>{trade.date}</td>
+                      <td>{dayName(trade.date)}</td>
                       <td>
-                        <strong>{trade.symbol}</strong>
-                        <span>{trade.direction}</span>
-                      </td>
-                      <td>
-                        <strong>{trade.setup}</strong>
-                        <span>{trade.session}</span>
-                      </td>
-                      <td className={rMultiple >= 0 ? "positive" : "negative"}>
-                        {decimal(rMultiple)}
-                      </td>
-                      <td className={trade.pnl >= 0 ? "positive" : "negative"}>
-                        {money(trade.pnl)}
-                      </td>
-                      <td>
-                        <span className={`grade grade-${trade.grade.toLowerCase()}`}>
-                          {trade.grade}
+                        <span className={trade.beHit === "Yes" ? "be-pill yes" : "be-pill no"}>
+                          {trade.beHit}
                         </span>
                       </td>
+                      <td>{rValue(trade.firstTpR)}</td>
+                      <td>{rValue(trade.maxR)}</td>
+                      <td className={toneClass(trade.actualR)}>{rValue(trade.actualR)}</td>
+                      <td className={toneClass(result.firstTp)}>{rValue(result.firstTp)}</td>
+                      <td className={toneClass(result.onePointFive)}>
+                        {rValue(result.onePointFive)}
+                      </td>
+                      <td className={toneClass(result.twoR)}>{rValue(result.twoR)}</td>
+                      <td className={toneClass(result.threeR)}>{rValue(result.threeR)}</td>
+                      <td className="notes-cell">{trade.notes || "No note"}</td>
                       <td>
-                        <button
-                          className="table-action"
-                          type="button"
-                          onClick={() => deleteTrade(trade.id)}
-                        >
-                          Delete
-                        </button>
+                        <div className="table-actions">
+                          <button className="table-action" type="button" onClick={() => editTrade(trade)}>
+                            Edit
+                          </button>
+                          <button
+                            className="table-action danger"
+                            type="button"
+                            onClick={() => void deleteTrade(trade.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
+                {!monthlyTrades.length ? (
+                  <tr>
+                    <td className="empty-row" colSpan={12}>
+                      {isLoading ? "Loading trades..." : "No trades logged for this month yet."}
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
         </section>
       </div>
 
-      <section className="review-grid" aria-label="Review summary">
+      <section className="review-grid" aria-label="Strategy review">
         <article className="review-panel">
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Patterns</p>
-              <h2>Setup Mix</h2>
+              <p className="eyebrow">Comparison</p>
+              <h2>Strategy Comparison</h2>
             </div>
           </div>
-          <div className="setup-bars">
-            {setupBreakdown.map((item) => (
-              <div className="setup-bar" key={item.setup}>
-                <div className="setup-label">
-                  <strong>{item.setup}</strong>
-                  <span>{item.count} trades</span>
+          <div className="strategy-list">
+            {strategyRows.map((row) => {
+              const maxTotal = Math.max(1, ...strategyRows.map((item) => Math.abs(item.total)));
+              return (
+                <div className="strategy-row" key={row.key}>
+                  <div>
+                    <strong>{row.label}</strong>
+                    <span>{percent(row.winRate)} win rate</span>
+                  </div>
+                  <div className="bar-track">
+                    <span
+                      className={row.total >= 0 ? "bar-positive" : "bar-negative"}
+                      style={{ width: `${Math.max(5, (Math.abs(row.total) / maxTotal) * 100)}%` }}
+                    />
+                  </div>
+                  <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
+                  <span>{rValue(row.average)} avg</span>
                 </div>
-                <div className="bar-track">
-                  <span style={{ width: `${(item.count / maxSetupCount) * 100}%` }} />
-                </div>
-                <span className={item.pnl >= 0 ? "positive" : "negative"}>
-                  {money(item.pnl)}
-                </span>
+              );
+            })}
+          </div>
+        </article>
+
+        <article className="review-panel calendar-panel">
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Calendar</p>
+              <h2>Daily Actual R</h2>
+            </div>
+          </div>
+          <div className="calendar-grid">
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+              <strong className="calendar-head" key={day}>
+                {day}
+              </strong>
+            ))}
+            {calendarCells.map((cell, index) => (
+              <div
+                className={`calendar-cell ${cell.day ? toneClass(cell.total) : "blank"}`}
+                key={`${cell.date}-${index}`}
+              >
+                {cell.day ? (
+                  <>
+                    <span>{cell.day}</span>
+                    <strong>{cell.count ? rValue(cell.total) : ""}</strong>
+                    <small>{cell.count ? `${cell.count} trades` : ""}</small>
+                  </>
+                ) : null}
               </div>
             ))}
           </div>
         </article>
 
-        <article className="review-panel">
+        <article className="review-panel weekly-panel">
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Reflection</p>
-              <h2>Recent Notes</h2>
+              <p className="eyebrow">Weekly</p>
+              <h2>Weekly R</h2>
             </div>
-            <span className="status-pill">
-              Best: {stats.bestTrade?.symbol ?? "--"}
-            </span>
           </div>
-          <div className="note-list">
-            {sortedTrades.slice(0, 4).map((trade) => (
-              <div className="note-item" key={trade.id}>
-                <div>
-                  <strong>
-                    {trade.symbol} / {trade.grade}
-                  </strong>
-                  <span>{trade.setup}</span>
-                </div>
-                <p>{trade.notes || "No note added."}</p>
+          <div className="weekly-list">
+            {weeklyRows.map((week) => (
+              <div className="weekly-row" key={week.label}>
+                <span>{week.label}</span>
+                <strong className={toneClass(week.total)}>
+                  {week.tradeDays ? rValue(week.total) : "--"}
+                </strong>
+                <small>{week.tradeDays ? `${week.tradeDays} trade days` : "No trades"}</small>
               </div>
             ))}
           </div>

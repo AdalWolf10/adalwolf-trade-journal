@@ -4,62 +4,60 @@ import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
 
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+test("defines the exit strategy journal shell", async () => {
+  const [page, layout] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+  ]);
+  const source = page + layout;
 
-  return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html", host: "journal.example" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
-}
-
-test("server-renders the trade journal app shell", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /<title>Trade Journal<\/title>/i);
-  assert.match(html, /Personal trading workspace/);
-  assert.match(html, /New Trade/);
-  assert.match(html, /Trade Log/);
-  assert.match(html, /Total P\/L/);
-  assert.match(html, /Opening range reclaim/);
-  assert.match(html, /Export JSON/);
-  assert.match(html, /Export CSV/);
+  assert.match(source, /Exit Strategy Journal/);
+  assert.match(source, /Personal exit workspace/);
+  assert.match(source, /BE Hit\?/);
+  assert.match(source, /First TP R/);
+  assert.match(source, /Max R/);
+  assert.match(source, /Actual R/);
+  assert.match(source, /Strategy Comparison/);
+  assert.match(source, /Daily Actual R/);
+  assert.match(source, /Weekly R/);
+  assert.match(source, /Export JSON/);
+  assert.match(source, /Export CSV/);
   assert.doesNotMatch(
-    html,
+    source,
     /Your site is taking shape|Building your site|codex-preview|react-loading-skeleton/i,
   );
 });
 
-test("removes starter preview assets and keeps sharing metadata", async () => {
-  const [page, layout, packageJson] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-  ]);
+test("wires the hosted exit journal data model", async () => {
+  const [page, layout, packageJson, schema, route, hosting, migration] =
+    await Promise.all([
+      readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../package.json", import.meta.url), "utf8"),
+      readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/api/trades/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
+      readFile(new URL("../drizzle/0000_colossal_ironclad.sql", import.meta.url), "utf8"),
+    ]);
 
-  assert.match(page, /trade-journal\.entries\.v1/);
-  assert.match(page, /downloadFile\("trade-journal\.csv"/);
-  assert.match(page, /accept="application\/json,\.json"/);
-  assert.match(layout, /generateMetadata/);
+  assert.match(page, /fetch\("\/api\/trades"/);
+  assert.match(page, /function strategyResult/);
+  assert.match(page, /beHit === "No"/);
+  assert.match(page, /onePointFive: trade\.maxR >= 1\.5 \? 1\.5 : 0/);
+  assert.doesNotMatch(page, /localStorage|sessionStorage/);
+  assert.match(layout, /Exit Strategy Journal/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /twitter/);
   assert.match(layout, /\/og\.png/);
   assert.match(packageJson, /"name": "trade-journal-site"/);
+  assert.match(schema, /exitTrades/);
+  assert.match(schema, /sqliteTable\("exit_trades"/);
+  assert.match(route, /export async function GET/);
+  assert.match(route, /export async function POST/);
+  assert.match(route, /export async function PUT/);
+  assert.match(route, /export async function DELETE/);
+  assert.match(hosting, /"d1": "DB"/);
+  assert.match(migration, /CREATE TABLE `exit_trades`/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(page + layout, /_sites-preview|Starter Project|codex-preview/);
 

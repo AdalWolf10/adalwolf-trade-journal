@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const title = "Trade Journal";
+const title = "Exit Strategy Journal";
 const description =
-  "A focused trading journal for logging executions, reviewing patterns, and tracking performance.";
+  "A focused R-based trade journal for comparing actual exits against First TP, 1.5R, 2R, and 3R strategies.";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -43,7 +43,7 @@ export async function generateMetadata(): Promise<Metadata> {
           url: "/og.png",
           width: 1200,
           height: 630,
-          alt: "Trade Journal dashboard preview",
+          alt: "Exit Strategy Journal dashboard preview",
         },
       ],
     },
