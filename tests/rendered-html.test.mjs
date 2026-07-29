@@ -13,6 +13,7 @@ test("defines the exit strategy journal shell", async () => {
   const source = home + journal + layout;
 
   assert.match(source, /Welcome/);
+  assert.match(source, /Please login to continue/);
   assert.match(source, /Exit Strategy Journal/);
   assert.match(source, /Net Actual R/);
   assert.match(source, /Profit Factor/);
@@ -34,7 +35,10 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /showDatePicker/);
   assert.match(source, /date-picker-input/);
   assert.match(source, /sort-header/);
+  assert.match(source, /↕/);
   assert.match(source, /sortedMonthlyTrades/);
+  assert.match(source, /modal-backdrop/);
+  assert.match(source, /entry-modal/);
   assert.match(source, /Exit Comparison/);
   assert.match(source, /Strategy Totals/);
   assert.match(source, /Daily Net Cumulative R/);

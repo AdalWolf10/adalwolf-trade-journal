@@ -430,16 +430,25 @@ h2 {
   align-items: start;
 }
 
+.calendar-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
 .analytics-rail {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   display: grid;
   gap: 12px;
 }
 
 .operations-grid {
+  grid-column: 1;
+  grid-row: 2;
   display: grid;
-  grid-template-columns: minmax(330px, 0.7fr) minmax(0, 1.55fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 0;
   align-items: start;
 }
 
@@ -871,6 +880,31 @@ textarea:focus {
   color: #ffe1a0;
 }
 
+.dashboard-notice {
+  margin: 0 0 12px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  background: rgba(3, 4, 7, 0.72);
+  padding: 20px;
+}
+
+.entry-modal {
+  width: min(720px, 100%);
+  max-height: min(90vh, 780px);
+  overflow: auto;
+}
+
+.entry-modal .panel-actions {
+  align-items: center;
+}
+
 .trade-table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -967,9 +1001,15 @@ textarea:focus {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .dashboard-grid,
-  .operations-grid {
+  .dashboard-grid {
     grid-template-columns: 1fr;
+  }
+
+  .calendar-panel,
+  .analytics-rail,
+  .operations-grid {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .calendar-layout {

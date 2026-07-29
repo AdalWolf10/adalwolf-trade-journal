@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type BeHit = "Yes" | "No";
 
@@ -923,19 +923,20 @@ export default function Home() {
   const [selectedMonth, setSelectedMonth] = useState(initialMonth);
   const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isEntryOpen, setIsEntryOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState("");
 
-  function handleUnauthorized(response: Response) {
+  const handleUnauthorized = useCallback((response: Response) => {
     if (response.status === 401) {
       window.location.href = "/";
       return true;
     }
     return false;
-  }
+  }, []);
 
-  async function loadTrades() {
+  const loadTrades = useCallback(async () => {
     setIsLoading(true);
     setNotice("");
     try {
@@ -953,11 +954,14 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [handleUnauthorized]);
 
   useEffect(() => {
-    void loadTrades();
-  }, []);
+    const timeoutId = window.setTimeout(() => {
+      void loadTrades();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadTrades]);
 
   const sortedTrades = useMemo(
     () =>
@@ -1200,19 +1204,15 @@ export default function Home() {
   );
 
   const cumulativeSeries = useMemo(() => {
-    let total = 0;
     const monthAscending = [...monthlyTrades].sort((a, b) => {
       const dateSort = a.date.localeCompare(b.date);
       return dateSort || (a.createdAt ?? 0) - (b.createdAt ?? 0);
     });
 
-    return [
-      0,
-      ...monthAscending.map((trade) => {
-        total += trade.actualR;
-        return total;
-      }),
-    ];
+    return monthAscending.reduce<number[]>(
+      (points, trade) => [...points, (points.at(-1) ?? 0) + trade.actualR],
+      [0],
+    );
   }, [monthlyTrades]);
 
   const cumulativeChart = useMemo(() => chartShape(cumulativeSeries), [cumulativeSeries]);
@@ -1254,9 +1254,9 @@ export default function Home() {
 
   function sortIndicator(key: TradeSortKey) {
     if (tradeSort.key !== key) {
-      return "Sort";
+      return "↕";
     }
-    return tradeSort.direction === "asc" ? "Asc" : "Desc";
+    return tradeSort.direction === "asc" ? "↑" : "↓";
   }
 
   function showDatePicker(input: HTMLInputElement) {
@@ -1277,6 +1277,16 @@ export default function Home() {
   function resetForm(month = selectedMonth) {
     setDraft(defaultDraft(month));
     setEditingId(null);
+  }
+
+  function openNewTrade() {
+    resetForm();
+    setIsEntryOpen(true);
+  }
+
+  function closeEntryDialog() {
+    resetForm();
+    setIsEntryOpen(false);
   }
 
   async function saveTrade(event: FormEvent<HTMLFormElement>) {
@@ -1306,6 +1316,7 @@ export default function Home() {
       );
       setSelectedMonth(monthKey(data.trade.date));
       resetForm(monthKey(data.trade.date));
+      setIsEntryOpen(false);
       setNotice(editingId ? "Trade updated." : "Trade added.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to save trade");
@@ -1325,6 +1336,7 @@ export default function Home() {
       notes: trade.notes,
     });
     setSelectedMonth(monthKey(trade.date));
+    setIsEntryOpen(true);
   }
 
   async function deleteTrade(id: string) {
@@ -1343,6 +1355,7 @@ export default function Home() {
       setTrades((current) => current.filter((trade) => trade.id !== id));
       if (editingId === id) {
         resetForm();
+        setIsEntryOpen(false);
       }
       setNotice("Trade deleted.");
     } catch (error) {
@@ -1428,6 +1441,94 @@ export default function Home() {
   }
 
   const formStrategy = strategyResult(draft);
+  const entryForm = (
+    <form className="trade-form" onSubmit={saveTrade}>
+      <div className="field-row">
+        <label>
+          Date
+          <input
+            className="date-picker-input"
+            type="date"
+            value={draft.date}
+            onClick={(event) => showDatePicker(event.currentTarget)}
+            onChange={(event) => updateDraft("date", event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                showDatePicker(event.currentTarget);
+              }
+            }}
+          />
+        </label>
+        <label>
+          BE Hit?
+          <select
+            value={draft.beHit}
+            onChange={(event) => updateDraft("beHit", event.target.value as BeHit)}
+          >
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="field-row">
+        <label>
+          First TP R
+          <input
+            min="0.1"
+            step="0.1"
+            type="number"
+            value={draft.firstTpR}
+            onChange={(event) => updateDraft("firstTpR", Number(event.target.value))}
+          />
+        </label>
+        <label>
+          Max R
+          <input
+            min="0"
+            step="0.1"
+            type="number"
+            value={draft.maxR}
+            onChange={(event) => updateDraft("maxR", Number(event.target.value))}
+          />
+        </label>
+        <label>
+          Actual R
+          <input
+            disabled={draft.beHit === "No"}
+            step="0.1"
+            type="number"
+            value={draft.actualR}
+            onChange={(event) => updateDraft("actualR", Number(event.target.value))}
+          />
+        </label>
+      </div>
+
+      <label>
+        Notes
+        <textarea
+          rows={4}
+          value={draft.notes}
+          onChange={(event) => updateDraft("notes", event.target.value)}
+        />
+      </label>
+
+      <div className="formula-preview" aria-label="Strategy result preview">
+        <span>First TP {rValue(formStrategy.firstTp)}</span>
+        <span>1.5R {rValue(formStrategy.onePointFive)}</span>
+        <span>2R {rValue(formStrategy.twoR)}</span>
+        <span>3R {rValue(formStrategy.threeR)}</span>
+      </div>
+
+      <button className="primary-button" disabled={isSaving} type="submit">
+        {isSaving ? "Saving..." : editingId ? "Save Trade" : "Add Trade"}
+      </button>
+      <button className="utility-button" type="button" onClick={closeEntryDialog}>
+        Cancel
+      </button>
+    </form>
+  );
 
   return (
     <main className="journal-shell">
@@ -1475,7 +1576,7 @@ export default function Home() {
             Import
             <input accept="application/json,.json,.xlsx" type="file" onChange={handleImport} />
           </label>
-          <button className="primary-button compact" type="button" onClick={() => resetForm()}>
+          <button className="primary-button compact" type="button" onClick={openNewTrade}>
             New Trade
           </button>
           <button className="utility-button" type="button" onClick={() => void logout()}>
@@ -1565,6 +1666,8 @@ export default function Home() {
         </button>
       </section>
 
+      {notice ? <p className="notice dashboard-notice">{notice}</p> : null}
+
       <section className="dashboard-grid" aria-label="Monthly dashboard">
         <article className="review-panel calendar-panel calendar-dominant">
           <div className="panel-heading compact">
@@ -1619,6 +1722,100 @@ export default function Home() {
             </div>
           </div>
         </article>
+
+        <section className="operations-grid" aria-label="Trade operations">
+          <section className="log-panel" aria-labelledby="log-heading">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Trade Log</p>
+                <h2 id="log-heading">{selectedMonthLabel}</h2>
+              </div>
+              <div className="panel-actions">
+                <button className="utility-button" type="button" onClick={() => void loadTrades()}>
+                  Refresh
+                </button>
+                <button
+                  className="utility-button"
+                  disabled={isSaving}
+                  type="button"
+                  onClick={() => void addSampleTrades()}
+                >
+                  Add Sample
+                </button>
+              </div>
+            </div>
+
+            <div className="trade-table-wrap">
+              <table className="trade-table">
+                <thead>
+                  <tr>
+                    {sortableTradeColumns.map((column) => (
+                      <th key={column.key}>
+                        <button
+                          className={`sort-header ${tradeSort.key === column.key ? "active" : ""}`}
+                          type="button"
+                          onClick={() => toggleTradeSort(column.key)}
+                        >
+                          {column.label}
+                          <span>{sortIndicator(column.key)}</span>
+                        </button>
+                      </th>
+                    ))}
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedMonthlyTrades.map((trade) => {
+                    const result = strategyResult(trade);
+                    return (
+                      <tr key={trade.id}>
+                        <td>{trade.date}</td>
+                        <td>{dayName(trade.date)}</td>
+                        <td>
+                          <span className={trade.beHit === "Yes" ? "be-pill yes" : "be-pill no"}>
+                            {trade.beHit}
+                          </span>
+                        </td>
+                        <td>{rValue(trade.firstTpR)}</td>
+                        <td>{rValue(trade.maxR)}</td>
+                        <td className={toneClass(trade.actualR)}>{rValue(trade.actualR)}</td>
+                        <td className={toneClass(result.firstTp)}>{rValue(result.firstTp)}</td>
+                        <td className={toneClass(result.onePointFive)}>
+                          {rValue(result.onePointFive)}
+                        </td>
+                        <td className={toneClass(result.twoR)}>{rValue(result.twoR)}</td>
+                        <td className={toneClass(result.threeR)}>{rValue(result.threeR)}</td>
+                        <td className="notes-cell">{trade.notes || "No note"}</td>
+                        <td>
+                          <div className="table-actions">
+                            <button className="table-action" type="button" onClick={() => editTrade(trade)}>
+                              Edit
+                            </button>
+                            <button
+                              className="table-action danger"
+                              type="button"
+                              onClick={() => void deleteTrade(trade.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!sortedMonthlyTrades.length ? (
+                    <tr>
+                      <td className="empty-row" colSpan={12}>
+                        {isLoading ? "Loading trades..." : "No trades logged for this month yet."}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
 
         <aside className="analytics-rail">
           <article className="review-panel score-panel">
@@ -1717,205 +1914,44 @@ export default function Home() {
         </aside>
       </section>
 
-      <section className="operations-grid" aria-label="Trade operations">
-        <section className="entry-panel" aria-labelledby="entry-heading">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Entry</p>
-              <h2 id="entry-heading">{editingId ? "Edit Trade" : "New Trade"}</h2>
-            </div>
-            <span className="status-pill">{selectedMonth}</span>
-          </div>
-
-          <form className="trade-form" onSubmit={saveTrade}>
-            <div className="field-row">
-              <label>
-                Date
-                <input
-                  className="date-picker-input"
-                  type="date"
-                  value={draft.date}
-                  onClick={(event) => showDatePicker(event.currentTarget)}
-                  onChange={(event) => updateDraft("date", event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      showDatePicker(event.currentTarget);
-                    }
-                  }}
-                />
-              </label>
-              <label>
-                BE Hit?
-                <select
-                  value={draft.beHit}
-                  onChange={(event) => updateDraft("beHit", event.target.value as BeHit)}
-                >
-                  <option>Yes</option>
-                  <option>No</option>
-                </select>
-              </label>
+      {isEntryOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeEntryDialog();
+            }
+          }}
+        >
+          <section
+            className="entry-panel entry-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="entry-heading"
+          >
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Entry</p>
+                <h2 id="entry-heading">{editingId ? "Edit Trade" : "New Trade"}</h2>
+              </div>
+              <div className="panel-actions">
+                <span className="status-pill">{selectedMonth}</span>
+                <button className="table-action" type="button" onClick={closeEntryDialog}>
+                  Close
+                </button>
+              </div>
             </div>
 
-            <div className="field-row">
-              <label>
-                First TP R
-                <input
-                  min="0.1"
-                  step="0.1"
-                  type="number"
-                  value={draft.firstTpR}
-                  onChange={(event) => updateDraft("firstTpR", Number(event.target.value))}
-                />
-              </label>
-              <label>
-                Max R
-                <input
-                  min="0"
-                  step="0.1"
-                  type="number"
-                  value={draft.maxR}
-                  onChange={(event) => updateDraft("maxR", Number(event.target.value))}
-                />
-              </label>
-              <label>
-                Actual R
-                <input
-                  disabled={draft.beHit === "No"}
-                  step="0.1"
-                  type="number"
-                  value={draft.actualR}
-                  onChange={(event) => updateDraft("actualR", Number(event.target.value))}
-                />
-              </label>
+            {entryForm}
+
+            <div className="rule-note">
+              <strong>BE gate:</strong> No means every planned strategy is -1R. Yes means
+              Max R decides which targets were reached; missed targets count 0R.
             </div>
-
-            <label>
-              Notes
-              <textarea
-                rows={4}
-                value={draft.notes}
-                onChange={(event) => updateDraft("notes", event.target.value)}
-              />
-            </label>
-
-            <div className="formula-preview" aria-label="Strategy result preview">
-              <span>First TP {rValue(formStrategy.firstTp)}</span>
-              <span>1.5R {rValue(formStrategy.onePointFive)}</span>
-              <span>2R {rValue(formStrategy.twoR)}</span>
-              <span>3R {rValue(formStrategy.threeR)}</span>
-            </div>
-
-            <button className="primary-button" disabled={isSaving} type="submit">
-              {isSaving ? "Saving..." : editingId ? "Save Trade" : "Add Trade"}
-            </button>
-            {editingId ? (
-              <button className="utility-button" type="button" onClick={() => resetForm()}>
-                Cancel Edit
-              </button>
-            ) : null}
-          </form>
-
-          <div className="rule-note">
-            <strong>BE gate:</strong> No means every planned strategy is -1R. Yes means
-            Max R decides which targets were reached; missed targets count 0R.
-          </div>
-
-          {notice ? <p className="notice">{notice}</p> : null}
-        </section>
-
-        <section className="log-panel" aria-labelledby="log-heading">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Trade Log</p>
-              <h2 id="log-heading">{selectedMonthLabel}</h2>
-            </div>
-            <div className="panel-actions">
-              <button className="utility-button" type="button" onClick={() => void loadTrades()}>
-                Refresh
-              </button>
-              <button
-                className="utility-button"
-                disabled={isSaving}
-                type="button"
-                onClick={() => void addSampleTrades()}
-              >
-                Add Sample
-              </button>
-            </div>
-          </div>
-
-          <div className="trade-table-wrap">
-            <table className="trade-table">
-              <thead>
-                <tr>
-                  {sortableTradeColumns.map((column) => (
-                    <th key={column.key}>
-                      <button
-                        className={`sort-header ${tradeSort.key === column.key ? "active" : ""}`}
-                        type="button"
-                        onClick={() => toggleTradeSort(column.key)}
-                      >
-                        {column.label}
-                        <span>{sortIndicator(column.key)}</span>
-                      </button>
-                    </th>
-                  ))}
-                  <th>Notes</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedMonthlyTrades.map((trade) => {
-                  const result = strategyResult(trade);
-                  return (
-                    <tr key={trade.id}>
-                      <td>{trade.date}</td>
-                      <td>{dayName(trade.date)}</td>
-                      <td>
-                        <span className={trade.beHit === "Yes" ? "be-pill yes" : "be-pill no"}>
-                          {trade.beHit}
-                        </span>
-                      </td>
-                      <td>{rValue(trade.firstTpR)}</td>
-                      <td>{rValue(trade.maxR)}</td>
-                      <td className={toneClass(trade.actualR)}>{rValue(trade.actualR)}</td>
-                      <td className={toneClass(result.firstTp)}>{rValue(result.firstTp)}</td>
-                      <td className={toneClass(result.onePointFive)}>
-                        {rValue(result.onePointFive)}
-                      </td>
-                      <td className={toneClass(result.twoR)}>{rValue(result.twoR)}</td>
-                      <td className={toneClass(result.threeR)}>{rValue(result.threeR)}</td>
-                      <td className="notes-cell">{trade.notes || "No note"}</td>
-                      <td>
-                        <div className="table-actions">
-                          <button className="table-action" type="button" onClick={() => editTrade(trade)}>
-                            Edit
-                          </button>
-                          <button
-                            className="table-action danger"
-                            type="button"
-                            onClick={() => void deleteTrade(trade.id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {!sortedMonthlyTrades.length ? (
-                  <tr>
-                    <td className="empty-row" colSpan={12}>
-                      {isLoading ? "Loading trades..." : "No trades logged for this month yet."}
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </section>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
