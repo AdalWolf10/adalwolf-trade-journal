@@ -68,6 +68,11 @@ button:disabled {
   opacity: 0.62;
 }
 
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
 .journal-shell {
   width: min(1520px, calc(100% - 24px));
   margin: 0 auto;
@@ -127,6 +132,13 @@ button:disabled {
 .login-error {
   color: var(--red);
   font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.import-format-note {
+  margin: 10px 0 14px;
+  color: var(--muted);
+  font-size: 0.78rem;
   line-height: 1.4;
 }
 
@@ -282,8 +294,7 @@ h2 {
 .metric-card small,
 .strategy-row span,
 .weekly-row small,
-.calendar-cell small,
-.score-details span {
+.calendar-cell small {
   display: block;
   color: var(--muted);
   font-size: 0.8rem;
@@ -334,20 +345,17 @@ h2 {
 }
 
 .spread-bar,
-.score-bar,
 .bar-track {
   overflow: hidden;
   border-radius: 999px;
   background: #252832;
 }
 
-.spread-bar,
-.score-bar {
+.spread-bar {
   height: 8px;
 }
 
-.spread-bar span,
-.score-bar span {
+.spread-bar span {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -372,7 +380,7 @@ h2 {
   color: var(--amber) !important;
 }
 
-.month-navigator {
+.month-switcher {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -391,37 +399,15 @@ h2 {
   font-size: 1rem;
 }
 
-.month-current {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 2px;
-}
-
-.month-current span,
-.month-current small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 0.74rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.month-current strong {
-  overflow: hidden;
-  color: var(--foreground);
-  font-size: 1rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .month-tabs {
   display: grid;
   grid-auto-columns: minmax(116px, 1fr);
   grid-auto-flow: column;
+  min-width: 0;
+  flex: 1;
   gap: 8px;
   overflow-x: auto;
-  padding: 0 0 12px;
+  padding: 0;
 }
 
 .month-tabs button {
@@ -618,54 +604,59 @@ h2 {
   font-size: 1.08rem;
 }
 
-.radar-wrap {
+.score-hero {
   display: grid;
-  grid-template-columns: 170px minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
+  gap: 2px;
+  margin-top: 12px;
+  border: 1px solid rgba(143, 103, 255, 0.34);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(109, 82, 255, 0.18), rgba(18, 20, 25, 0.95));
+  padding: 13px;
 }
 
-.radar-chart {
-  width: 156px;
-  height: 156px;
+.score-hero strong {
+  color: var(--ink);
+  font-size: 1.8rem;
+  line-height: 1;
 }
 
-.radar-grid {
-  fill: rgba(143, 103, 255, 0.08);
-  stroke: rgba(143, 103, 255, 0.34);
-  stroke-width: 1;
+.score-hero span {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
-.radar-grid.inner {
-  fill: transparent;
-}
-
-.radar-fill {
-  fill: rgba(143, 103, 255, 0.42);
-  stroke: #9b7cff;
-  stroke-width: 2;
-}
-
-.score-details {
+.score-breakdown {
   display: grid;
-  gap: 8px;
-}
-
-.score-details span {
-  display: flex;
-  justify-content: space-between;
   gap: 10px;
-}
-
-.score-details strong {
-  color: var(--foreground);
-}
-
-.score-bar {
   margin-top: 12px;
 }
 
-.score-bar span {
+.score-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.score-breakdown-row span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.score-breakdown-row strong {
+  color: var(--foreground);
+  font-size: 0.82rem;
+}
+
+.score-track {
+  grid-column: 1 / -1;
+  height: 7px;
+}
+
+.score-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
   background: linear-gradient(90deg, var(--red), var(--amber), var(--green));
 }
 
@@ -968,8 +959,7 @@ textarea:focus {
 
   .topbar,
   .field-row,
-  .panel-heading,
-  .radar-wrap {
+  .panel-heading {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1024,10 +1014,6 @@ textarea:focus {
   .strategy-row {
     grid-template-columns: 1fr;
   }
-
-  .radar-chart {
-    justify-self: center;
-  }
 }
 
 @media (max-width: 480px) {
@@ -1035,16 +1021,13 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
-  .month-navigator {
+  .month-switcher {
     flex-wrap: wrap;
   }
 
-  .month-current {
+  .month-tabs {
     order: -1;
     flex-basis: 100%;
-  }
-
-  .month-tabs {
     grid-auto-columns: minmax(106px, 1fr);
   }
 }

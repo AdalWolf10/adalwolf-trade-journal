@@ -38,7 +38,7 @@ export default function Home() {
       <section className="login-panel" aria-labelledby="login-heading">
         <div className="login-brand">
           <p className="eyebrow">Private dashboard</p>
-          <h1 id="login-heading">Exit Strategy Journal</h1>
+          <h1 id="login-heading">Welcome</h1>
           <p className="subtle-line">Log in to open your personal trading journal.</p>
         </div>
 

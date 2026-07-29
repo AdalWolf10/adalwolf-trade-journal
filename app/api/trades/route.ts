@@ -27,8 +27,9 @@ function parsePayload(payload: TradePayload) {
   const date = typeof payload.date === "string" ? payload.date : "";
   const beHit = payload.beHit === "No" ? "No" : payload.beHit === "Yes" ? "Yes" : "";
   const firstTpR = toNumber(payload.firstTpR);
-  const maxR = toNumber(payload.maxR);
-  const actualR = toNumber(payload.actualR);
+  const rawMaxR = toNumber(payload.maxR);
+  const maxR = beHit === "No" && rawMaxR === null ? 0 : rawMaxR;
+  const actualR = beHit === "No" ? -1 : toNumber(payload.actualR);
   const notes = typeof payload.notes === "string" ? payload.notes.trim() : "";
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {

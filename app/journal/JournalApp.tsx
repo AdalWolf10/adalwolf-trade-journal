@@ -178,14 +178,6 @@ function chartShape(values: number[], width = 340, height = 142) {
   return { area, baseY, pointList };
 }
 
-function radarPoint(index: number, total: number, value: number, radius = 66, center = 78) {
-  const angle = (Math.PI * 2 * index) / total - Math.PI / 2;
-  const scaled = clamp(value, 0, 100) / 100;
-  const x = center + Math.cos(angle) * radius * scaled;
-  const y = center + Math.sin(angle) * radius * scaled;
-  return `${x.toFixed(2)},${y.toFixed(2)}`;
-}
-
 function strategyResult(trade: Pick<ExitTrade, "beHit" | "firstTpR" | "maxR">): StrategyResult {
   if (trade.beHit === "No") {
     return {
@@ -399,12 +391,13 @@ async function unzipWorkbook(buffer: ArrayBuffer) {
     const compressedData = bytes.slice(dataStart, dataStart + compressedSize);
 
     if (!name.endsWith("/")) {
-      files[name] =
-        method === 0
-          ? compressedData
-          : method === 8
-            ? await inflateDeflateRaw(compressedData)
-            : new Uint8Array();
+      if (method === 0) {
+        files[name] = compressedData;
+      } else if (method === 8) {
+        files[name] = await inflateDeflateRaw(compressedData);
+      } else {
+        throw new Error("That Excel file uses an unsupported compression format.");
+      }
     }
 
     centralOffset += 46 + nameLength + extraLength + commentLength;
@@ -488,7 +481,12 @@ function readCellValue(cell: Element, sharedStrings: string[]) {
 }
 
 function rowsToTrades(rows: string[][]) {
-  const headers = rows[0] ?? [];
+  const headerIndex = rows.findIndex((row) => headerScore(row) >= 5);
+  if (headerIndex < 0) {
+    throw new Error("Excel needs columns for Date, BE Hit, First TP R, Max R, and Actual R.");
+  }
+
+  const headers = rows[headerIndex] ?? [];
   const columns: Partial<Record<keyof DraftTrade, number>> = {};
   headers.forEach((header, index) => {
     const key = headerAliases[normalizeHeader(header)];
@@ -508,38 +506,76 @@ function rowsToTrades(rows: string[][]) {
   }
 
   return rows
-    .slice(1)
-    .map((row) =>
-      normalizeTrade({
-        actualR: parseNumberCell(row[columns.actualR as number]),
-        beHit: parseBeHit(row[columns.beHit as number]),
+    .slice(headerIndex + 1)
+    .map((row) => {
+      const beHit = parseBeHit(row[columns.beHit as number]);
+      return normalizeTrade({
+        actualR: beHit === "No" ? -1 : parseNumberCell(row[columns.actualR as number]),
+        beHit,
         date: parseDateCell(row[columns.date as number]),
-        firstTpR: parseNumberCell(row[columns.firstTpR as number]),
-        maxR: parseNumberCell(row[columns.maxR as number]),
+        firstTpR: parseNumberCell(row[columns.firstTpR as number]) ?? (beHit === "No" ? 1 : undefined),
+        maxR: parseNumberCell(row[columns.maxR as number]) ?? (beHit === "No" ? 0 : undefined),
         notes: columns.notes === undefined ? "" : row[columns.notes],
-      }),
-    )
+      });
+    })
     .filter((trade): trade is DraftTrade => Boolean(trade));
 }
 
 const headerAliases: Record<string, keyof DraftTrade> = {
+  actual: "actualR",
   actualr: "actualR",
   actualexit: "actualR",
+  actualresult: "actualR",
   be: "beHit",
-  behit: "beHit",
-  breakeven: "beHit",
   breakevenhit: "beHit",
+  behit: "beHit",
+  behitno: "beHit",
+  behityes: "beHit",
+  breakeven: "beHit",
+  comment: "notes",
+  comments: "notes",
   date: "date",
+  entrydate: "date",
+  exitr: "actualR",
+  firsttarget: "firstTpR",
   firsttargetr: "firstTpR",
+  firsttakeprofit: "firstTpR",
   firsttp: "firstTpR",
   firsttpr: "firstTpR",
+  highestr: "maxR",
+  maxfavorabler: "maxR",
+  maxmove: "maxR",
   maxr: "maxR",
   maximumr: "maxR",
+  mfe: "maxR",
+  netr: "actualR",
   note: "notes",
   notes: "notes",
+  plr: "actualR",
+  pnl: "actualR",
+  pnlr: "actualR",
+  r: "actualR",
   realizedr: "actualR",
+  resultr: "actualR",
+  review: "notes",
+  takeprofit1: "firstTpR",
+  target1: "firstTpR",
+  tp1: "firstTpR",
   tradedate: "date",
 };
+
+function headerScore(row: string[]) {
+  const found = new Set<keyof DraftTrade>();
+  row.forEach((header) => {
+    const key = headerAliases[normalizeHeader(header)];
+    if (key) {
+      found.add(key);
+    }
+  });
+  return ["date", "beHit", "firstTpR", "maxR", "actualR"].filter((key) =>
+    found.has(key as keyof DraftTrade),
+  ).length;
+}
 
 function parseDateCell(value: string | undefined) {
   const text = String(value ?? "").trim();
@@ -574,7 +610,13 @@ function parseBeHit(value: string | undefined) {
 }
 
 function parseNumberCell(value: string | undefined) {
-  return Number(String(value ?? "").replace(/[,$Rr\s]/g, ""));
+  const cleaned = String(value ?? "").replace(/[,$Rr\s]/g, "");
+  if (!cleaned) {
+    return undefined;
+  }
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function normalizeHeader(value: string | undefined) {
@@ -763,14 +805,18 @@ function normalizeTrade(value: unknown): DraftTrade | null {
   }
 
   const trade = value as Partial<ExitTrade>;
-  const firstTpR = Number(trade.firstTpR);
-  const maxR = Number(trade.maxR);
-  const actualR = Number(trade.actualR);
+  const beHit = trade.beHit === "No" ? "No" : trade.beHit === "Yes" ? "Yes" : "";
+  const firstTpRValue = Number(trade.firstTpR);
+  const maxRValue = Number(trade.maxR);
+  const actualRValue = Number(trade.actualR);
+  const firstTpR = Number.isFinite(firstTpRValue) && firstTpRValue > 0 ? firstTpRValue : beHit === "No" ? 1 : firstTpRValue;
+  const maxR = Number.isFinite(maxRValue) && maxRValue >= 0 ? maxRValue : beHit === "No" ? 0 : maxRValue;
+  const actualR = beHit === "No" ? -1 : actualRValue;
 
   if (
     typeof trade.date !== "string" ||
     !/^\d{4}-\d{2}-\d{2}$/.test(trade.date) ||
-    (trade.beHit !== "Yes" && trade.beHit !== "No") ||
+    !beHit ||
     !Number.isFinite(firstTpR) ||
     firstTpR <= 0 ||
     !Number.isFinite(maxR) ||
@@ -782,7 +828,7 @@ function normalizeTrade(value: unknown): DraftTrade | null {
 
   return {
     date: trade.date,
-    beHit: trade.beHit,
+    beHit,
     firstTpR,
     maxR,
     actualR,
@@ -1080,20 +1126,20 @@ export default function Home() {
 
   const cumulativeChart = useMemo(() => chartShape(cumulativeSeries), [cumulativeSeries]);
 
-  const radarScores = useMemo(
+  const scoreBreakdownRows = useMemo(
     () => [
-      { label: "Win %", value: stats.winRate },
-      { label: "Profit factor", value: clamp(stats.profitFactor === Infinity ? 100 : stats.profitFactor * 34, 0, 100) },
-      { label: "Capture", value: clamp(stats.captureRate, 0, 100) },
-      { label: "BE rate", value: stats.beRate },
-      { label: "Consistency", value: clamp(100 - Math.abs(stats.avgActual - stats.avgMax) * 18, 0, 100) },
+      { label: "Win rate", score: clamp(stats.winRate, 0, 100), value: percent(stats.winRate) },
+      { label: "Capture rate", score: clamp(stats.captureRate, 0, 100), value: percent(stats.captureRate) },
+      {
+        label: "Profit factor",
+        score: clamp(stats.profitFactor === Infinity ? 100 : stats.profitFactor * 34, 0, 100),
+        value: ratio(stats.profitFactor),
+      },
+      { label: "BE protection", score: clamp(stats.beRate, 0, 100), value: percent(stats.beRate) },
     ],
-    [stats.avgActual, stats.avgMax, stats.beRate, stats.captureRate, stats.profitFactor, stats.winRate],
+    [stats.beRate, stats.captureRate, stats.profitFactor, stats.winRate],
   );
 
-  const radarPolygon = radarScores
-    .map((item, index) => radarPoint(index, radarScores.length, item.value))
-    .join(" ");
   const maxStrategyTotal = Math.max(1, ...strategyRows.map((item) => Math.abs(item.total)));
   const selectedMonthLabel = monthLabel(selectedMonth);
 
@@ -1109,7 +1155,10 @@ export default function Home() {
   }
 
   function updateDraft<K extends keyof DraftTrade>(field: K, value: DraftTrade[K]) {
-    setDraft((current) => ({ ...current, [field]: value }));
+    setDraft((current) => {
+      const next = { ...current, [field]: value };
+      return field === "beHit" && value === "No" ? { ...next, actualR: -1 } : next;
+    });
   }
 
   function resetForm(month = selectedMonth) {
@@ -1303,6 +1352,13 @@ export default function Home() {
           >
             Export Excel
           </button>
+          <button
+            className="utility-button"
+            type="button"
+            onClick={() => downloadBlob("exit-journal-template.xlsx", toXlsxBlob([]))}
+          >
+            Excel Template
+          </button>
           <label className="utility-button file-button">
             Import
             <input accept="application/json,.json,.xlsx" type="file" onChange={handleImport} />
@@ -1315,6 +1371,10 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      <p className="import-format-note">
+        Excel format: Date, BE Hit, First TP R, Max R, Actual R, Notes. BE Hit No saves Actual R as -1R.
+      </p>
 
       <section className="metric-grid" aria-label="Journal statistics">
         <article className="metric-card primary-metric">
@@ -1366,23 +1426,29 @@ export default function Home() {
           <small>Avg Max {rValue(stats.avgMax)}</small>
         </article>
         <article className="metric-card score-metric">
-          <span>Exit Score</span>
+          <span>Journal Score</span>
           <strong>{stats.score.toFixed(1)}</strong>
-          <small>{stats.bestMethod.label} leads</small>
+          <small>0-100</small>
         </article>
       </section>
 
-      <section className="month-navigator" aria-label="Month navigation">
+      <section className="month-switcher" aria-label="Month navigation">
         <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
           &lt;
         </button>
-        <div className="month-current">
-          <span>Viewing month</span>
-          <strong>{selectedMonthLabel}</strong>
-          <small>
-            {rValue(monthlyStats.totalActual)} across {monthlyStats.trades} trades
-          </small>
-        </div>
+        <nav className="month-tabs" aria-label="Month tabs">
+          {monthTabs.map((month) => (
+            <button
+              className={selectedMonth === month.key ? "active" : ""}
+              key={month.key}
+              type="button"
+              onClick={() => goToMonth(month.key)}
+            >
+              <span>{month.label}</span>
+              <small>{month.count} trades</small>
+            </button>
+          ))}
+        </nav>
         <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
           &gt;
         </button>
@@ -1390,20 +1456,6 @@ export default function Home() {
           This month
         </button>
       </section>
-
-      <nav className="month-tabs" aria-label="Month tabs">
-        {monthTabs.map((month) => (
-          <button
-            className={selectedMonth === month.key ? "active" : ""}
-            key={month.key}
-            type="button"
-            onClick={() => goToMonth(month.key)}
-          >
-            <span>{month.label}</span>
-            <small>{month.count} trades</small>
-          </button>
-        ))}
-      </nav>
 
       <section className="dashboard-grid" aria-label="Monthly dashboard">
         <article className="review-panel calendar-panel calendar-dominant">
@@ -1465,27 +1517,28 @@ export default function Home() {
             <div className="panel-heading compact">
               <div>
                 <p className="eyebrow">Score</p>
-                <h2>Exit Score</h2>
+                <h2>Journal Score</h2>
               </div>
               <span className="status-pill">{stats.score.toFixed(1)}</span>
             </div>
-            <div className="radar-wrap">
-              <svg aria-hidden="true" className="radar-chart" viewBox="0 0 156 156">
-                <polygon className="radar-grid" points={radarScores.map((_, index) => radarPoint(index, radarScores.length, 100)).join(" ")} />
-                <polygon className="radar-grid inner" points={radarScores.map((_, index) => radarPoint(index, radarScores.length, 66)).join(" ")} />
-                <polygon className="radar-grid inner" points={radarScores.map((_, index) => radarPoint(index, radarScores.length, 33)).join(" ")} />
-                <polygon className="radar-fill" points={radarPolygon} />
-              </svg>
-              <div className="score-details">
-                {radarScores.map((item) => (
-                  <span key={item.label}>
-                    {item.label} <strong>{percent(item.value)}</strong>
-                  </span>
-                ))}
-              </div>
+            <div className="score-hero">
+              <strong>{stats.score.toFixed(1)}</strong>
+              <span>out of 100</span>
             </div>
-            <div className="score-bar">
-              <span style={{ width: `${stats.score}%` }} />
+            <div className="score-breakdown" aria-label="Journal score breakdown">
+              {scoreBreakdownRows.map((item) => (
+                <div className="score-breakdown-row" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                  <div className="score-track">
+                    <span style={{ width: `${item.score}%` }} />
+                  </div>
+                </div>
+              ))}
+              <div className="score-breakdown-row">
+                <span>Leading exit</span>
+                <strong>{stats.bestMethod.label}</strong>
+              </div>
             </div>
           </article>
 
@@ -1612,6 +1665,7 @@ export default function Home() {
               <label>
                 Actual R
                 <input
+                  disabled={draft.beHit === "No"}
                   step="0.1"
                   type="number"
                   value={draft.actualR}

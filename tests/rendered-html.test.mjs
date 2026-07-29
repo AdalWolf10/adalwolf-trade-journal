@@ -12,22 +12,27 @@ test("defines the exit strategy journal shell", async () => {
   ]);
   const source = home + journal + layout;
 
+  assert.match(source, /Welcome/);
   assert.match(source, /Exit Strategy Journal/);
   assert.match(source, /Log in to open your personal trading journal/);
   assert.match(source, /BE first\. Targets next\./);
   assert.match(source, /Net Actual R/);
   assert.match(source, /Profit Factor/);
-  assert.match(source, /Exit Score/);
+  assert.match(source, /Journal Score/);
+  assert.match(source, /Journal score breakdown/);
   assert.match(source, /BE Hit\?/);
   assert.match(source, /First TP R/);
   assert.match(source, /Max R/);
   assert.match(source, /Actual R/);
   assert.match(source, /Month navigation/);
+  assert.match(source, /month-switcher/);
   assert.match(source, /This month/);
   assert.match(source, /function shiftMonth/);
   assert.match(source, /Month tabs/);
   assert.match(source, /month-tabs/);
   assert.match(source, /Export Excel/);
+  assert.match(source, /Excel Template/);
+  assert.match(source, /Excel format: Date, BE Hit, First TP R, Max R, Actual R, Notes/);
   assert.match(source, /parseXlsxTrades/);
   assert.match(source, /Exit Comparison/);
   assert.match(source, /Strategy Totals/);
@@ -61,7 +66,9 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journal, /fetch\("\/api\/trades"/);
   assert.match(journal, /function strategyResult/);
   assert.match(journal, /beHit === "No"/);
+  assert.match(journal, /actualR: beHit === "No" \? -1/);
   assert.match(journal, /onePointFive: trade\.maxR >= 1\.5 \? 1\.5 : 0/);
+  assert.doesNotMatch(journal, /radar/);
   assert.doesNotMatch(journal, /localStorage|sessionStorage/);
   assert.match(pageRoute, /isAuthenticated/);
   assert.match(pageRoute, /redirect\("\/"\)/);
@@ -70,6 +77,7 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(login, /Set-Cookie/);
   assert.match(logout, /makeExpiredSessionCookie/);
   assert.match(route, /requireAuthenticatedRequest/);
+  assert.match(route, /actualR = beHit === "No" \? -1/);
   assert.match(layout, /Exit Strategy Journal/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /twitter/);
