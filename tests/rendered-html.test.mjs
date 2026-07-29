@@ -5,13 +5,15 @@ import test from "node:test";
 const templateRoot = new URL("../", import.meta.url);
 
 test("defines the exit strategy journal shell", async () => {
-  const [page, layout] = await Promise.all([
+  const [home, journal, layout] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   ]);
-  const source = page + layout;
+  const source = home + journal + layout;
 
   assert.match(source, /Exit Strategy Journal/);
+  assert.match(source, /Log in to open your personal trading journal/);
   assert.match(source, /BE first\. Targets next\./);
   assert.match(source, /Net Actual R/);
   assert.match(source, /Profit Factor/);
@@ -23,13 +25,17 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /Month navigation/);
   assert.match(source, /This month/);
   assert.match(source, /function shiftMonth/);
+  assert.match(source, /Month tabs/);
+  assert.match(source, /month-tabs/);
+  assert.match(source, /Export Excel/);
+  assert.match(source, /parseXlsxTrades/);
+  assert.match(source, /Exit Comparison/);
   assert.match(source, /Strategy Totals/);
   assert.match(source, /Daily Net Cumulative R/);
   assert.match(source, /trade days/);
   assert.match(source, /Export JSON/);
   assert.match(source, /Export CSV/);
   assert.doesNotMatch(source, /buildMonthOptions/);
-  assert.doesNotMatch(source, /month-tabs/);
   assert.doesNotMatch(
     source,
     /Your site is taking shape|Building your site|codex-preview|react-loading-skeleton/i,
@@ -37,9 +43,13 @@ test("defines the exit strategy journal shell", async () => {
 });
 
 test("wires the hosted exit journal data model", async () => {
-  const [page, layout, packageJson, schema, route, hosting, migration] =
+  const [journal, pageRoute, auth, login, logout, layout, packageJson, schema, route, hosting, migration] =
     await Promise.all([
-      readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/journal/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/api/auth/login/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/api/auth/logout/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
       readFile(new URL("../package.json", import.meta.url), "utf8"),
       readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -48,11 +58,18 @@ test("wires the hosted exit journal data model", async () => {
       readFile(new URL("../drizzle/0000_colossal_ironclad.sql", import.meta.url), "utf8"),
     ]);
 
-  assert.match(page, /fetch\("\/api\/trades"/);
-  assert.match(page, /function strategyResult/);
-  assert.match(page, /beHit === "No"/);
-  assert.match(page, /onePointFive: trade\.maxR >= 1\.5 \? 1\.5 : 0/);
-  assert.doesNotMatch(page, /localStorage|sessionStorage/);
+  assert.match(journal, /fetch\("\/api\/trades"/);
+  assert.match(journal, /function strategyResult/);
+  assert.match(journal, /beHit === "No"/);
+  assert.match(journal, /onePointFive: trade\.maxR >= 1\.5 \? 1\.5 : 0/);
+  assert.doesNotMatch(journal, /localStorage|sessionStorage/);
+  assert.match(pageRoute, /isAuthenticated/);
+  assert.match(pageRoute, /redirect\("\/"\)/);
+  assert.match(auth, /JOURNAL_USERNAME/);
+  assert.match(auth, /SESSION_SECRET/);
+  assert.match(login, /Set-Cookie/);
+  assert.match(logout, /makeExpiredSessionCookie/);
+  assert.match(route, /requireAuthenticatedRequest/);
   assert.match(layout, /Exit Strategy Journal/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /twitter/);
@@ -67,7 +84,7 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(hosting, /"d1": "DB"/);
   assert.match(migration, /CREATE TABLE `exit_trades`/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.doesNotMatch(page + layout, /_sites-preview|Starter Project|codex-preview/);
+  assert.doesNotMatch(journal + layout, /_sites-preview|Starter Project|codex-preview/);
 
   await access(new URL("../public/og.png", import.meta.url));
   await assert.rejects(access(new URL("app/_sites-preview", templateRoot)));

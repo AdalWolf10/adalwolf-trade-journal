@@ -74,6 +74,62 @@ button:disabled {
   padding: 18px 0 36px;
 }
 
+.login-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-panel {
+  width: min(430px, 100%);
+  border: 1px solid rgba(56, 61, 72, 0.92);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at top right, rgba(143, 103, 255, 0.2), transparent 46%),
+    linear-gradient(180deg, rgba(24, 26, 31, 0.98), rgba(15, 16, 19, 0.98));
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.login-brand {
+  margin-bottom: 22px;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.login-form input {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0e1013;
+  color: var(--foreground);
+  padding: 0 12px;
+  outline: none;
+}
+
+.login-form input:focus {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 3px rgba(143, 103, 255, 0.14);
+}
+
+.login-error {
+  color: var(--red);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -139,7 +195,8 @@ h2 {
 .utility-button,
 .primary-button,
 .table-action,
-.nav-icon {
+.nav-icon,
+.month-tabs button {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -161,7 +218,8 @@ h2 {
 
 .utility-button:hover,
 .table-action:hover,
-.nav-icon:hover {
+.nav-icon:hover,
+.month-tabs button:hover {
   border-color: #4b5160;
   background: #171a20;
   transform: translateY(-1px);
@@ -355,6 +413,35 @@ h2 {
   font-size: 1rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.month-tabs {
+  display: grid;
+  grid-auto-columns: minmax(116px, 1fr);
+  grid-auto-flow: column;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 0 12px;
+}
+
+.month-tabs button {
+  display: grid;
+  min-width: 116px;
+  gap: 3px;
+  justify-items: start;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.month-tabs button.active {
+  border-color: rgba(143, 103, 255, 0.8);
+  background: linear-gradient(135deg, rgba(109, 82, 255, 0.34), rgba(32, 34, 41, 0.95));
+  color: #ffffff;
+}
+
+.month-tabs small {
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
 .dashboard-grid {
@@ -604,6 +691,47 @@ h2 {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 3;
+}
+
+.comparison-summary {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.comparison-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.comparison-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121419;
+  padding: 10px;
+}
+
+.comparison-row.actual {
+  border-color: rgba(143, 103, 255, 0.64);
+  background: linear-gradient(135deg, rgba(109, 82, 255, 0.22), rgba(18, 20, 25, 0.95));
+}
+
+.comparison-row span {
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-weight: 740;
+}
+
+.comparison-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
 .strategy-list {
@@ -914,5 +1042,9 @@ textarea:focus {
   .month-current {
     order: -1;
     flex-basis: 100%;
+  }
+
+  .month-tabs {
+    grid-auto-columns: minmax(106px, 1fr);
   }
 }

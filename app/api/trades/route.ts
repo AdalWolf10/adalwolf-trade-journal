@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { exitTrades } from "@/db/schema";
+import { requireAuthenticatedRequest } from "@/lib/auth";
 
 type TradePayload = {
   id?: unknown;
@@ -75,7 +76,12 @@ function toRouteErrorMessage(error: unknown) {
   return message;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const unauthorized = await requireAuthenticatedRequest(request);
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   try {
     const db = getDb();
     const trades = await db
@@ -91,6 +97,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAuthenticatedRequest(request);
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   try {
     const parsed = parsePayload((await request.json()) as TradePayload);
     if ("error" in parsed) {
@@ -116,6 +127,11 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const unauthorized = await requireAuthenticatedRequest(request);
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   try {
     const url = new URL(request.url);
     const id = url.searchParams.get("id");
@@ -146,6 +162,11 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const unauthorized = await requireAuthenticatedRequest(request);
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   try {
     const url = new URL(request.url);
     const id = url.searchParams.get("id");
