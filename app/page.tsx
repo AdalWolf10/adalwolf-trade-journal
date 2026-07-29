@@ -133,6 +133,47 @@ function toneClass(value: number) {
   return "neutral";
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function ratio(value: number) {
+  if (value === Infinity) {
+    return "--";
+  }
+
+  return Number.isFinite(value) ? value.toFixed(2) : "--";
+}
+
+function chartShape(values: number[], width = 340, height = 142) {
+  const series = values.length ? values : [0];
+  const min = Math.min(0, ...series);
+  const max = Math.max(0, ...series);
+  const range = max - min || 1;
+  const step = series.length > 1 ? width / (series.length - 1) : width;
+  const points = series.map((value, index) => {
+    const x = index * step;
+    const y = height - ((value - min) / range) * height;
+    return { x, y };
+  });
+  const baseY = height - ((0 - min) / range) * height;
+  const pointList = points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+  const area =
+    points.length > 1
+      ? `0,${baseY.toFixed(2)} ${pointList} ${width},${baseY.toFixed(2)}`
+      : `0,${baseY.toFixed(2)} ${width / 2},${points[0].y.toFixed(2)} ${width},${baseY.toFixed(2)}`;
+
+  return { area, baseY, pointList };
+}
+
+function radarPoint(index: number, total: number, value: number, radius = 66, center = 78) {
+  const angle = (Math.PI * 2 * index) / total - Math.PI / 2;
+  const scaled = clamp(value, 0, 100) / 100;
+  const x = center + Math.cos(angle) * radius * scaled;
+  const y = center + Math.sin(angle) * radius * scaled;
+  return `${x.toFixed(2)},${y.toFixed(2)}`;
+}
+
 function strategyResult(trade: Pick<ExitTrade, "beHit" | "firstTpR" | "maxR">): StrategyResult {
   if (trade.beHit === "No") {
     return {
@@ -322,7 +363,16 @@ export default function Home() {
   const stats = useMemo(() => {
     const totalActual = trades.reduce((sum, trade) => sum + trade.actualR, 0);
     const totalMax = trades.reduce((sum, trade) => sum + trade.maxR, 0);
-    const wins = trades.filter((trade) => trade.actualR > 0).length;
+    const winners = trades.filter((trade) => trade.actualR > 0);
+    const losers = trades.filter((trade) => trade.actualR < 0);
+    const wins = winners.length;
+    const beHits = trades.filter((trade) => trade.beHit === "Yes").length;
+    const grossWin = winners.reduce((sum, trade) => sum + trade.actualR, 0);
+    const grossLoss = Math.abs(losers.reduce((sum, trade) => sum + trade.actualR, 0));
+    const avgWin = winners.length ? grossWin / winners.length : 0;
+    const avgLoss = losers.length ? grossLoss / losers.length : 0;
+    const profitFactor = grossLoss ? grossWin / grossLoss : grossWin ? Infinity : 0;
+    const avgWinLoss = avgLoss ? avgWin / avgLoss : avgWin ? Infinity : 0;
     const avgMax = trades.length
       ? trades.reduce((sum, trade) => sum + trade.maxR, 0) / trades.length
       : 0;
@@ -331,14 +381,34 @@ export default function Home() {
       strategyRows[0] ?? { label: "Actual", total: 0 },
     );
 
+    const winRate = trades.length ? (wins / trades.length) * 100 : 0;
+    const captureRate = totalMax ? (totalActual / totalMax) * 100 : 0;
+    const beRate = trades.length ? (beHits / trades.length) * 100 : 0;
+    const score = clamp(
+      winRate * 0.28 +
+        clamp(captureRate, 0, 100) * 0.28 +
+        clamp(profitFactor === Infinity ? 100 : profitFactor * 34, 0, 100) * 0.24 +
+        beRate * 0.2,
+      0,
+      100,
+    );
+
     return {
       avgActual: trades.length ? totalActual / trades.length : 0,
       avgMax,
+      avgWinLoss,
+      beRate,
       bestMethod,
-      captureRate: totalMax ? (totalActual / totalMax) * 100 : 0,
+      captureRate,
+      grossLoss,
+      grossWin,
+      losses: losers.length,
+      profitFactor,
+      score,
       totalActual,
       trades: trades.length,
-      winRate: trades.length ? (wins / trades.length) * 100 : 0,
+      winRate,
+      wins,
     };
   }, [strategyRows, trades]);
 
@@ -414,6 +484,40 @@ export default function Home() {
       }),
     [calendarCells],
   );
+
+  const cumulativeSeries = useMemo(() => {
+    let total = 0;
+    const monthAscending = [...monthlyTrades].sort((a, b) => {
+      const dateSort = a.date.localeCompare(b.date);
+      return dateSort || (a.createdAt ?? 0) - (b.createdAt ?? 0);
+    });
+
+    return [
+      0,
+      ...monthAscending.map((trade) => {
+        total += trade.actualR;
+        return total;
+      }),
+    ];
+  }, [monthlyTrades]);
+
+  const cumulativeChart = useMemo(() => chartShape(cumulativeSeries), [cumulativeSeries]);
+
+  const radarScores = useMemo(
+    () => [
+      { label: "Win %", value: stats.winRate },
+      { label: "Profit factor", value: clamp(stats.profitFactor === Infinity ? 100 : stats.profitFactor * 34, 0, 100) },
+      { label: "Capture", value: clamp(stats.captureRate, 0, 100) },
+      { label: "BE rate", value: stats.beRate },
+      { label: "Consistency", value: clamp(100 - Math.abs(stats.avgActual - stats.avgMax) * 18, 0, 100) },
+    ],
+    [stats.avgActual, stats.avgMax, stats.beRate, stats.captureRate, stats.profitFactor, stats.winRate],
+  );
+
+  const radarPolygon = radarScores
+    .map((item, index) => radarPoint(index, radarScores.length, item.value))
+    .join(" ");
+  const maxStrategyTotal = Math.max(1, ...strategyRows.map((item) => Math.abs(item.total)));
 
   function selectMonth(key: string) {
     setSelectedMonth(key);
@@ -576,8 +680,9 @@ export default function Home() {
     <main className="journal-shell">
       <header className="topbar" aria-label="Exit strategy journal header">
         <div>
-          <p className="eyebrow">Personal exit workspace</p>
+          <p className="eyebrow">Dashboard</p>
           <h1>Exit Strategy Journal</h1>
+          <p className="subtle-line">BE first. Targets next. Compare the exit, not the memory.</p>
         </div>
         <div className="topbar-actions">
           <button
@@ -604,33 +709,65 @@ export default function Home() {
             Import
             <input accept="application/json,.json" type="file" onChange={handleImport} />
           </label>
+          <button className="primary-button compact" type="button" onClick={() => resetForm()}>
+            New Trade
+          </button>
         </div>
       </header>
 
       <section className="metric-grid" aria-label="Journal statistics">
-        <article className="metric-card">
-          <span>Total Actual R</span>
+        <article className="metric-card primary-metric">
+          <span>Net Actual R</span>
           <strong className={toneClass(stats.totalActual)}>{rValue(stats.totalActual)}</strong>
+          <small>{stats.trades} logged trades</small>
         </article>
-        <article className="metric-card">
-          <span>Win Rate</span>
-          <strong>{percent(stats.winRate)}</strong>
+        <article className="metric-card visual-metric">
+          <div>
+            <span>Profit Factor</span>
+            <strong>{ratio(stats.profitFactor)}</strong>
+          </div>
+          <div
+            className="mini-ring"
+            style={{
+              background: `conic-gradient(var(--green) ${clamp(stats.profitFactor === Infinity ? 360 : stats.profitFactor * 90, 0, 360)}deg, var(--red) 0deg)`,
+            }}
+          >
+            <span>{ratio(stats.profitFactor)}</span>
+          </div>
         </article>
-        <article className="metric-card">
-          <span>Average Max R</span>
-          <strong>{rValue(stats.avgMax)}</strong>
+        <article className="metric-card visual-metric">
+          <div>
+            <span>Trade Win %</span>
+            <strong>{percent(stats.winRate)}</strong>
+          </div>
+          <div
+            className="mini-ring"
+            style={{
+              background: `conic-gradient(var(--green) ${stats.winRate * 3.6}deg, var(--red) 0deg)`,
+            }}
+          >
+            <span>{stats.wins}/{stats.losses}</span>
+          </div>
+        </article>
+        <article className="metric-card spread-metric">
+          <span>Avg Win/Loss</span>
+          <strong>{ratio(stats.avgWinLoss)}</strong>
+          <div className="spread-bar">
+            <span style={{ width: `${clamp(stats.avgWinLoss * 24, 8, 92)}%` }} />
+          </div>
+          <small>
+            +{rValue(stats.grossWin)} / -{rValue(stats.grossLoss)}
+          </small>
         </article>
         <article className="metric-card">
           <span>Capture Rate</span>
           <strong className={toneClass(stats.captureRate)}>{percent(stats.captureRate)}</strong>
+          <small>Avg Max {rValue(stats.avgMax)}</small>
         </article>
-        <article className="metric-card">
-          <span>Best Method</span>
-          <strong>{stats.bestMethod.label}</strong>
-        </article>
-        <article className="metric-card">
-          <span>Total Trades</span>
-          <strong>{stats.trades}</strong>
+        <article className="metric-card score-metric">
+          <span>Exit Score</span>
+          <strong>{stats.score.toFixed(1)}</strong>
+          <small>{stats.bestMethod.label} leads</small>
         </article>
       </section>
 
@@ -645,13 +782,139 @@ export default function Home() {
               onClick={() => selectMonth(month.key)}
             >
               <span>{month.label}</span>
-              <small>{count}</small>
+              <small>{count} trades</small>
             </button>
           );
         })}
       </nav>
 
-      <div className="workspace-grid">
+      <section className="dashboard-grid" aria-label="Monthly dashboard">
+        <article className="review-panel calendar-panel calendar-dominant">
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Calendar</p>
+              <h2>{monthOptions.find((month) => month.key === selectedMonth)?.label} Actual R</h2>
+            </div>
+            <div className="month-summary">
+              <span>
+                Actual <strong className={toneClass(monthlyStats.totalActual)}>{rValue(monthlyStats.totalActual)}</strong>
+              </span>
+              <span>
+                Win <strong>{percent(monthlyStats.winRate)}</strong>
+              </span>
+              <span>
+                Best <strong>{monthlyStats.best.label}</strong>
+              </span>
+            </div>
+          </div>
+          <div className="calendar-layout">
+            <div className="calendar-grid">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                <strong className="calendar-head" key={day}>
+                  {day}
+                </strong>
+              ))}
+              {calendarCells.map((cell, index) => (
+                <div
+                  className={`calendar-cell ${cell.day ? toneClass(cell.total) : "blank"}`}
+                  key={`${cell.date}-${index}`}
+                >
+                  {cell.day ? (
+                    <>
+                      <span>{cell.day}</span>
+                      <strong>{cell.count ? rValue(cell.total) : ""}</strong>
+                      <small>{cell.count ? `${cell.count} trades` : ""}</small>
+                    </>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="weekly-list">
+              {weeklyRows.map((week) => (
+                <div className="weekly-row" key={week.label}>
+                  <span>{week.label}</span>
+                  <strong className={toneClass(week.total)}>
+                    {week.tradeDays ? rValue(week.total) : "--"}
+                  </strong>
+                  <small>{week.tradeDays ? `${week.tradeDays} trade days` : "No trades"}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        </article>
+
+        <aside className="analytics-rail">
+          <article className="review-panel score-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Score</p>
+                <h2>Exit Score</h2>
+              </div>
+              <span className="status-pill">{stats.score.toFixed(1)}</span>
+            </div>
+            <div className="radar-wrap">
+              <svg aria-hidden="true" className="radar-chart" viewBox="0 0 156 156">
+                <polygon className="radar-grid" points={radarScores.map((_, index) => radarPoint(index, radarScores.length, 100)).join(" ")} />
+                <polygon className="radar-grid inner" points={radarScores.map((_, index) => radarPoint(index, radarScores.length, 66)).join(" ")} />
+                <polygon className="radar-grid inner" points={radarScores.map((_, index) => radarPoint(index, radarScores.length, 33)).join(" ")} />
+                <polygon className="radar-fill" points={radarPolygon} />
+              </svg>
+              <div className="score-details">
+                {radarScores.map((item) => (
+                  <span key={item.label}>
+                    {item.label} <strong>{percent(item.value)}</strong>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="score-bar">
+              <span style={{ width: `${stats.score}%` }} />
+            </div>
+          </article>
+
+          <article className="review-panel curve-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Curve</p>
+                <h2>Daily Net Cumulative R</h2>
+              </div>
+            </div>
+            <svg className="curve-chart" role="img" viewBox="0 0 340 142">
+              <line className="curve-zero" x1="0" x2="340" y1={cumulativeChart.baseY} y2={cumulativeChart.baseY} />
+              <polygon className="curve-area" points={cumulativeChart.area} />
+              <polyline className="curve-line" points={cumulativeChart.pointList} />
+            </svg>
+          </article>
+
+          <article className="review-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Comparison</p>
+                <h2>Strategy Totals</h2>
+              </div>
+            </div>
+            <div className="strategy-list compact-strategy">
+              {strategyRows.map((row) => (
+                <div className="strategy-row" key={row.key}>
+                  <div>
+                    <strong>{row.label}</strong>
+                    <span>{percent(row.winRate)} win</span>
+                  </div>
+                  <div className="bar-track">
+                    <span
+                      className={row.total >= 0 ? "bar-positive" : "bar-negative"}
+                      style={{ width: `${Math.max(5, (Math.abs(row.total) / maxStrategyTotal) * 100)}%` }}
+                    />
+                  </div>
+                  <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
+                </div>
+              ))}
+            </div>
+          </article>
+        </aside>
+      </section>
+
+      <section className="operations-grid" aria-label="Trade operations">
         <section className="entry-panel" aria-labelledby="entry-heading">
           <div className="panel-heading">
             <div>
@@ -752,7 +1015,7 @@ export default function Home() {
         <section className="log-panel" aria-labelledby="log-heading">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Month Log</p>
+              <p className="eyebrow">Trade Log</p>
               <h2 id="log-heading">{monthOptions.find((month) => month.key === selectedMonth)?.label}</h2>
             </div>
             <div className="panel-actions">
@@ -768,24 +1031,6 @@ export default function Home() {
                 Add Sample
               </button>
             </div>
-          </div>
-
-          <div className="month-summary">
-            <span>
-              Trades <strong>{monthlyStats.trades}</strong>
-            </span>
-            <span>
-              Actual <strong className={toneClass(monthlyStats.totalActual)}>{rValue(monthlyStats.totalActual)}</strong>
-            </span>
-            <span>
-              Win Rate <strong>{percent(monthlyStats.winRate)}</strong>
-            </span>
-            <span>
-              Capture <strong>{percent(monthlyStats.captureRate)}</strong>
-            </span>
-            <span>
-              Best <strong>{monthlyStats.best.label}</strong>
-            </span>
           </div>
 
           <div className="trade-table-wrap">
@@ -856,88 +1101,6 @@ export default function Home() {
             </table>
           </div>
         </section>
-      </div>
-
-      <section className="review-grid" aria-label="Strategy review">
-        <article className="review-panel">
-          <div className="panel-heading compact">
-            <div>
-              <p className="eyebrow">Comparison</p>
-              <h2>Strategy Comparison</h2>
-            </div>
-          </div>
-          <div className="strategy-list">
-            {strategyRows.map((row) => {
-              const maxTotal = Math.max(1, ...strategyRows.map((item) => Math.abs(item.total)));
-              return (
-                <div className="strategy-row" key={row.key}>
-                  <div>
-                    <strong>{row.label}</strong>
-                    <span>{percent(row.winRate)} win rate</span>
-                  </div>
-                  <div className="bar-track">
-                    <span
-                      className={row.total >= 0 ? "bar-positive" : "bar-negative"}
-                      style={{ width: `${Math.max(5, (Math.abs(row.total) / maxTotal) * 100)}%` }}
-                    />
-                  </div>
-                  <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
-                  <span>{rValue(row.average)} avg</span>
-                </div>
-              );
-            })}
-          </div>
-        </article>
-
-        <article className="review-panel calendar-panel">
-          <div className="panel-heading compact">
-            <div>
-              <p className="eyebrow">Calendar</p>
-              <h2>Daily Actual R</h2>
-            </div>
-          </div>
-          <div className="calendar-grid">
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-              <strong className="calendar-head" key={day}>
-                {day}
-              </strong>
-            ))}
-            {calendarCells.map((cell, index) => (
-              <div
-                className={`calendar-cell ${cell.day ? toneClass(cell.total) : "blank"}`}
-                key={`${cell.date}-${index}`}
-              >
-                {cell.day ? (
-                  <>
-                    <span>{cell.day}</span>
-                    <strong>{cell.count ? rValue(cell.total) : ""}</strong>
-                    <small>{cell.count ? `${cell.count} trades` : ""}</small>
-                  </>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="review-panel weekly-panel">
-          <div className="panel-heading compact">
-            <div>
-              <p className="eyebrow">Weekly</p>
-              <h2>Weekly R</h2>
-            </div>
-          </div>
-          <div className="weekly-list">
-            {weeklyRows.map((week) => (
-              <div className="weekly-row" key={week.label}>
-                <span>{week.label}</span>
-                <strong className={toneClass(week.total)}>
-                  {week.tradeDays ? rValue(week.total) : "--"}
-                </strong>
-                <small>{week.tradeDays ? `${week.tradeDays} trade days` : "No trades"}</small>
-              </div>
-            ))}
-          </div>
-        </article>
       </section>
     </main>
   );

@@ -12,14 +12,17 @@ test("defines the exit strategy journal shell", async () => {
   const source = page + layout;
 
   assert.match(source, /Exit Strategy Journal/);
-  assert.match(source, /Personal exit workspace/);
+  assert.match(source, /BE first\. Targets next\./);
+  assert.match(source, /Net Actual R/);
+  assert.match(source, /Profit Factor/);
+  assert.match(source, /Exit Score/);
   assert.match(source, /BE Hit\?/);
   assert.match(source, /First TP R/);
   assert.match(source, /Max R/);
   assert.match(source, /Actual R/);
-  assert.match(source, /Strategy Comparison/);
-  assert.match(source, /Daily Actual R/);
-  assert.match(source, /Weekly R/);
+  assert.match(source, /Strategy Totals/);
+  assert.match(source, /Daily Net Cumulative R/);
+  assert.match(source, /trade days/);
   assert.match(source, /Export JSON/);
   assert.match(source, /Export CSV/);
   assert.doesNotMatch(
