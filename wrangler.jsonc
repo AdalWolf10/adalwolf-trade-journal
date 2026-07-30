@@ -9,6 +9,10 @@
     {
       "pattern": "journal.shubhamtripathi.com",
       "custom_domain": true
+    },
+    {
+      "pattern": "shubhamtripathi.com",
+      "custom_domain": true
     }
   ],
   "observability": {
