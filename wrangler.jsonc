@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "adalwolf-trade-journal",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "JOURNAL_USERNAME": "Adalwolf"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "adalwolf-trade-journal-db",
+      "database_id": "9a968ebc-9df9-4f6c-a28e-0cb7051f95d4",
+      "migrations_dir": "drizzle"
+    }
+  ]
+}
