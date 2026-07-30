@@ -27,6 +27,8 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /month-switcher/);
   assert.match(source, /This month/);
   assert.match(source, /function shiftMonth/);
+  assert.match(source, /function defaultDraftDate/);
+  assert.match(source, /currentDateKey/);
   assert.match(source, /Month tabs/);
   assert.match(source, /month-tabs/);
   assert.match(source, /Report Range/);

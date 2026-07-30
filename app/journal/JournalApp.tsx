@@ -72,6 +72,12 @@ function currentMonthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function currentDateKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+}
+
 function shiftMonth(key: string, offset: number) {
   const [year, month] = key.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1 + offset, 1));
@@ -96,9 +102,14 @@ function monthTabLabel(key: string) {
   });
 }
 
+function defaultDraftDate(month: string) {
+  const today = currentDateKey();
+  return monthKey(today) === month ? today : `${month}-01`;
+}
+
 function defaultDraft(month = initialMonth): DraftTrade {
   return {
-    date: `${month}-01`,
+    date: defaultDraftDate(month),
     beHit: "Yes",
     firstTpR: 1,
     maxR: 1,
@@ -1254,7 +1265,7 @@ export default function Home() {
   function goToMonth(key: string) {
     setSelectedMonth(key);
     if (!editingId) {
-      setDraft((current) => ({ ...current, date: `${key}-01` }));
+      setDraft((current) => ({ ...current, date: defaultDraftDate(key) }));
     }
   }
 
