@@ -1,6 +1,14 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type BeHit = "Yes" | "No";
 
@@ -17,6 +25,17 @@ type ExitTrade = {
 };
 
 type DraftTrade = Omit<ExitTrade, "id" | "createdAt" | "updatedAt">;
+
+type ImportTrade = DraftTrade & {
+  id?: string;
+};
+
+type PendingImport = {
+  duplicateMatches: ImportTrade[];
+  readyTrades: ImportTrade[];
+  skippedById: number;
+  sourceName: string;
+};
 
 type PasswordDraft = {
   confirmPassword: string;
@@ -279,8 +298,29 @@ function compareTradesForSort(left: ExitTrade, right: ExitTrade, sort: TradeSort
     : right.date.localeCompare(left.date) || (right.createdAt ?? 0) - (left.createdAt ?? 0);
 }
 
+function tradeFingerprint(trade: DraftTrade | ExitTrade | ImportTrade) {
+  return [
+    trade.date,
+    trade.beHit,
+    trade.firstTpR.toFixed(4),
+    trade.maxR.toFixed(4),
+    trade.actualR.toFixed(4),
+    trade.notes.trim(),
+  ].join("|");
+}
+
+function filenamePart(label: string) {
+  return (
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "trades"
+  );
+}
+
 function toCsv(trades: ExitTrade[]) {
   const headers = [
+    "id",
     "date",
     "day",
     "beHit",
@@ -300,6 +340,7 @@ function toCsv(trades: ExitTrade[]) {
   const rows = trades.map((trade) => {
     const result = strategyResult(trade);
     return [
+      trade.id,
       trade.date,
       dayName(trade.date),
       trade.beHit,
@@ -321,6 +362,7 @@ function toCsv(trades: ExitTrade[]) {
 
 const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const excelColumns = [
+  "ID",
   "Date",
   "Day",
   "BE Hit",
@@ -354,6 +396,7 @@ function toXlsxBlob(trades: ExitTrade[]) {
     ...trades.map((trade) => {
       const result = strategyResult(trade);
       return [
+        trade.id,
         trade.date,
         dayName(trade.date),
         trade.beHit,
@@ -415,12 +458,13 @@ function worksheetXml(rows: Array<Array<number | string>>) {
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:K${Math.max(rows.length, 1)}"/>
+  <dimension ref="A1:L${Math.max(rows.length, 1)}"/>
   <cols>
-    <col min="1" max="1" width="13" customWidth="1"/>
-    <col min="2" max="2" width="12" customWidth="1"/>
-    <col min="3" max="10" width="14" customWidth="1"/>
-    <col min="11" max="11" width="42" customWidth="1"/>
+    <col min="1" max="1" width="38" customWidth="1"/>
+    <col min="2" max="2" width="13" customWidth="1"/>
+    <col min="3" max="3" width="12" customWidth="1"/>
+    <col min="4" max="11" width="14" customWidth="1"/>
+    <col min="12" max="12" width="42" customWidth="1"/>
   </cols>
   <sheetData>${body}</sheetData>
 </worksheet>`;
@@ -570,7 +614,7 @@ function rowsToTrades(rows: string[][]) {
   }
 
   const headers = rows[headerIndex] ?? [];
-  const columns: Partial<Record<keyof DraftTrade, number>> = {};
+  const columns: Partial<Record<keyof ImportTrade, number>> = {};
   headers.forEach((header, index) => {
     const key = headerAliases[normalizeHeader(header)];
     if (key && columns[key] === undefined) {
@@ -597,14 +641,15 @@ function rowsToTrades(rows: string[][]) {
         beHit,
         date: parseDateCell(row[columns.date as number]),
         firstTpR: parseNumberCell(row[columns.firstTpR as number]) ?? (beHit === "No" ? 1 : undefined),
+        id: columns.id === undefined ? undefined : row[columns.id],
         maxR: parseNumberCell(row[columns.maxR as number]) ?? (beHit === "No" ? 0 : undefined),
         notes: columns.notes === undefined ? "" : row[columns.notes],
       });
     })
-    .filter((trade): trade is DraftTrade => Boolean(trade));
+    .filter((trade): trade is ImportTrade => Boolean(trade));
 }
 
-const headerAliases: Record<string, keyof DraftTrade> = {
+const headerAliases: Record<string, keyof ImportTrade> = {
   actual: "actualR",
   actualr: "actualR",
   actualexit: "actualR",
@@ -626,6 +671,9 @@ const headerAliases: Record<string, keyof DraftTrade> = {
   firsttp: "firstTpR",
   firsttpr: "firstTpR",
   highestr: "maxR",
+  id: "id",
+  importid: "id",
+  journalid: "id",
   maxfavorabler: "maxR",
   maxmove: "maxR",
   maxr: "maxR",
@@ -644,11 +692,12 @@ const headerAliases: Record<string, keyof DraftTrade> = {
   takeprofit1: "firstTpR",
   target1: "firstTpR",
   tp1: "firstTpR",
+  tradeid: "id",
   tradedate: "date",
 };
 
 function headerScore(row: string[]) {
-  const found = new Set<keyof DraftTrade>();
+  const found = new Set<keyof ImportTrade>();
   row.forEach((header) => {
     const key = headerAliases[normalizeHeader(header)];
     if (key) {
@@ -656,7 +705,7 @@ function headerScore(row: string[]) {
     }
   });
   return ["date", "beHit", "firstTpR", "maxR", "actualR"].filter((key) =>
-    found.has(key as keyof DraftTrade),
+    found.has(key as keyof ImportTrade),
   ).length;
 }
 
@@ -882,7 +931,7 @@ function escapeXml(value: string) {
   });
 }
 
-function normalizeTrade(value: unknown): DraftTrade | null {
+function normalizeTrade(value: unknown): ImportTrade | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -913,6 +962,7 @@ function normalizeTrade(value: unknown): DraftTrade | null {
     date: trade.date,
     beHit,
     firstTpR,
+    ...(typeof trade.id === "string" && trade.id.trim() ? { id: trade.id.trim() } : {}),
     maxR,
     actualR,
     notes: typeof trade.notes === "string" ? trade.notes : "",
@@ -925,7 +975,7 @@ function parseJsonTrades(parsed: unknown) {
     : parsed && typeof parsed === "object" && "trades" in parsed
       ? (parsed as { trades?: unknown[] }).trades ?? []
       : [];
-  return rawTrades.map(normalizeTrade).filter((trade): trade is DraftTrade => Boolean(trade));
+  return rawTrades.map(normalizeTrade).filter((trade): trade is ImportTrade => Boolean(trade));
 }
 
 export default function Home() {
@@ -937,14 +987,17 @@ export default function Home() {
   const [customEndMonth, setCustomEndMonth] = useState(initialMonth);
   const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isDataMenuOpen, setIsDataMenuOpen] = useState(false);
   const [isEntryOpen, setIsEntryOpen] = useState(false);
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isPasswordSaving, setIsPasswordSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [passwordDraft, setPasswordDraft] = useState<PasswordDraft>(() => emptyPasswordDraft());
   const [securityNotice, setSecurityNotice] = useState("");
+  const dataMenuRef = useRef<HTMLDivElement | null>(null);
 
   const handleUnauthorized = useCallback((response: Response) => {
     if (response.status === 401) {
@@ -980,6 +1033,31 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [loadTrades]);
+
+  useEffect(() => {
+    if (!isDataMenuOpen) {
+      return undefined;
+    }
+
+    function closeMenu(event: MouseEvent) {
+      if (!dataMenuRef.current?.contains(event.target as Node)) {
+        setIsDataMenuOpen(false);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsDataMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeMenu);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeMenu);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isDataMenuOpen]);
 
   const sortedTrades = useMemo(
     () =>
@@ -1046,6 +1124,11 @@ export default function Home() {
   const sortedReportTrades = useMemo(
     () => [...reportTrades].sort((left, right) => compareTradesForSort(left, right, tradeSort)),
     [reportTrades, tradeSort],
+  );
+
+  const exportBaseName = useMemo(
+    () => `exit-journal-${filenamePart(reportRange.label)}`,
+    [reportRange.label],
   );
 
   const monthTabs = useMemo(() => {
@@ -1463,24 +1546,56 @@ export default function Home() {
     }
   }
 
-  async function handleImport(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) {
+  function exportJournal(format: "csv" | "json" | "xlsx") {
+    setIsDataMenuOpen(false);
+
+    if (format === "json") {
+      downloadFile(
+        `${exportBaseName}.json`,
+        JSON.stringify(
+          {
+            exportedAt: new Date().toISOString(),
+            range: reportRange,
+            trades: sortedReportTrades,
+          },
+          null,
+          2,
+        ),
+        "application/json",
+      );
+      return;
+    }
+
+    if (format === "csv") {
+      downloadFile(`${exportBaseName}.csv`, toCsv(sortedReportTrades), "text/csv");
+      return;
+    }
+
+    downloadBlob(`${exportBaseName}.xlsx`, toXlsxBlob(sortedReportTrades));
+  }
+
+  function downloadTemplate() {
+    setIsDataMenuOpen(false);
+    downloadBlob("exit-journal-template.xlsx", toXlsxBlob([]));
+  }
+
+  async function importTrades(importTrades: ImportTrade[], skippedById = 0) {
+    setPendingImport(null);
+
+    if (!importTrades.length) {
+      setNotice(
+        skippedById
+          ? `${skippedById} existing trade${skippedById === 1 ? "" : "s"} skipped. Nothing new to import.`
+          : "No new trades to import.",
+      );
       return;
     }
 
     setIsSaving(true);
     setNotice("");
     try {
-      const normalized = file.name.toLowerCase().endsWith(".xlsx")
-        ? await parseXlsxTrades(file)
-        : parseJsonTrades(JSON.parse(await file.text()));
-
-      if (!normalized.length) {
-        throw new Error("No valid trades found in that file.");
-      }
-
-      for (const trade of normalized) {
+      let importedCount = 0;
+      for (const trade of importTrades) {
         const response = await fetch("/api/trades", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -1493,10 +1608,77 @@ export default function Home() {
           const data = (await response.json()) as { error?: string };
           throw new Error(data.error ?? "Unable to import trades");
         }
+        importedCount += 1;
       }
 
       await loadTrades();
-      setNotice(`${normalized.length} trades imported.`);
+      setNotice(
+        `${importedCount} trade${importedCount === 1 ? "" : "s"} imported.${
+          skippedById
+            ? ` ${skippedById} existing trade${skippedById === 1 ? "" : "s"} skipped.`
+            : ""
+        }`,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to import trades");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function reviewImport(importedTrades: ImportTrade[], sourceName: string) {
+    const existingIds = new Set(trades.map((trade) => trade.id));
+    const existingFingerprints = new Set(trades.map((trade) => tradeFingerprint(trade)));
+    const readyTrades: ImportTrade[] = [];
+    const duplicateMatches: ImportTrade[] = [];
+    let skippedById = 0;
+
+    importedTrades.forEach((trade) => {
+      if (trade.id && existingIds.has(trade.id)) {
+        skippedById += 1;
+        return;
+      }
+
+      if (existingFingerprints.has(tradeFingerprint(trade))) {
+        duplicateMatches.push(trade);
+        return;
+      }
+
+      readyTrades.push(trade);
+    });
+
+    if (duplicateMatches.length) {
+      setPendingImport({
+        duplicateMatches,
+        readyTrades,
+        skippedById,
+        sourceName,
+      });
+      return;
+    }
+
+    await importTrades(readyTrades, skippedById);
+  }
+
+  async function handleImport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setIsDataMenuOpen(false);
+    setIsSaving(true);
+    setNotice("");
+    try {
+      const normalized = file.name.toLowerCase().endsWith(".xlsx")
+        ? await parseXlsxTrades(file)
+        : parseJsonTrades(JSON.parse(await file.text()));
+
+      if (!normalized.length) {
+        throw new Error("No valid trades found in that file.");
+      }
+
+      await reviewImport(normalized, file.name);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to import trades");
     } finally {
@@ -1608,47 +1790,47 @@ export default function Home() {
           <h1>Exit Strategy Journal</h1>
         </div>
         <div className="topbar-actions">
-          <button
-            className="utility-button"
-            type="button"
-            onClick={() =>
-              downloadFile(
-                "exit-strategy-journal.json",
-                JSON.stringify({ trades: sortedTrades }, null, 2),
-                "application/json",
-              )
-            }
-          >
-            Export JSON
-          </button>
-          <button
-            className="utility-button"
-            type="button"
-            onClick={() => downloadFile("exit-strategy-journal.csv", toCsv(sortedTrades), "text/csv")}
-          >
-            Export CSV
-          </button>
-          <button
-            className="utility-button"
-            type="button"
-            onClick={() => downloadBlob("exit-strategy-journal.xlsx", toXlsxBlob(sortedTrades))}
-          >
-            Export Excel
-          </button>
-          <button
-            className="utility-button"
-            type="button"
-            onClick={() => downloadBlob("exit-journal-template.xlsx", toXlsxBlob([]))}
-          >
-            Excel Template
-          </button>
-          <label className="utility-button file-button">
-            Import
-            <input accept="application/json,.json,.xlsx" type="file" onChange={handleImport} />
-          </label>
           <button className="primary-button compact" type="button" onClick={openNewTrade}>
             New Trade
           </button>
+          <div className="data-menu" ref={dataMenuRef}>
+            <button
+              className="utility-button data-menu-trigger"
+              type="button"
+              aria-expanded={isDataMenuOpen}
+              aria-haspopup="menu"
+              onClick={() => setIsDataMenuOpen((current) => !current)}
+            >
+              Data <span aria-hidden="true">▾</span>
+            </button>
+            {isDataMenuOpen ? (
+              <div className="data-menu-panel" role="menu" aria-label="Import and export data">
+                <div className="data-menu-section">
+                  <span className="data-menu-label">Import</span>
+                  <label className="data-menu-item file-button" role="menuitem">
+                    Import JSON or Excel
+                    <input accept="application/json,.json,.xlsx" type="file" onChange={handleImport} />
+                  </label>
+                  <button className="data-menu-item" type="button" role="menuitem" onClick={downloadTemplate}>
+                    Excel Template
+                  </button>
+                </div>
+                <div className="data-menu-section">
+                  <span className="data-menu-label">Export Current View</span>
+                  <small className="data-menu-note">{reportRange.label}</small>
+                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => exportJournal("xlsx")}>
+                    Excel
+                  </button>
+                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => exportJournal("csv")}>
+                    CSV
+                  </button>
+                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => exportJournal("json")}>
+                    JSON
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
           <button className="utility-button" type="button" onClick={openSecurityDialog}>
             Security
           </button>
@@ -2029,6 +2211,114 @@ export default function Home() {
             <div className="rule-note">
               <strong>BE gate:</strong> No means every planned strategy is -1R. Yes means
               Max R decides which targets were reached; missed targets count 0R.
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pendingImport ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isSaving) {
+              setPendingImport(null);
+            }
+          }}
+        >
+          <section
+            className="entry-panel entry-modal import-review-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="import-review-heading"
+          >
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Import Review</p>
+                <h2 id="import-review-heading">Possible duplicate trades</h2>
+              </div>
+              <div className="panel-actions">
+                <button
+                  className="table-action"
+                  disabled={isSaving}
+                  type="button"
+                  onClick={() => setPendingImport(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <p className="import-review-copy">
+              {pendingImport.duplicateMatches.length} row
+              {pendingImport.duplicateMatches.length === 1 ? "" : "s"} from {pendingImport.sourceName} look
+              identical to trades already in the website.
+            </p>
+
+            <div className="import-review-stats">
+              <div>
+                <strong>{pendingImport.readyTrades.length}</strong>
+                <span>new trades ready</span>
+              </div>
+              <div>
+                <strong>{pendingImport.duplicateMatches.length}</strong>
+                <span>possible matches</span>
+              </div>
+              <div>
+                <strong>{pendingImport.skippedById}</strong>
+                <span>already skipped by ID</span>
+              </div>
+            </div>
+
+            <div className="duplicate-preview" aria-label="Rows that look identical">
+              {pendingImport.duplicateMatches.slice(0, 4).map((trade, index) => (
+                <div className="duplicate-preview-row" key={`${trade.date}-${index}`}>
+                  <strong>{trade.date}</strong>
+                  <span>{trade.beHit} BE</span>
+                  <span>Actual {rValue(trade.actualR)}</span>
+                  <small>{trade.notes || "No note"}</small>
+                </div>
+              ))}
+              {pendingImport.duplicateMatches.length > 4 ? (
+                <p className="data-menu-note">
+                  {pendingImport.duplicateMatches.length - 4} more matching row
+                  {pendingImport.duplicateMatches.length - 4 === 1 ? "" : "s"} hidden.
+                </p>
+              ) : null}
+            </div>
+
+            <div className="import-review-actions">
+              <button
+                className="utility-button"
+                disabled={isSaving}
+                type="button"
+                onClick={() => setPendingImport(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="utility-button"
+                disabled={isSaving}
+                type="button"
+                onClick={() =>
+                  void importTrades(pendingImport.readyTrades, pendingImport.skippedById)
+                }
+              >
+                Skip duplicates
+              </button>
+              <button
+                className="primary-button compact"
+                disabled={isSaving}
+                type="button"
+                onClick={() =>
+                  void importTrades(
+                    [...pendingImport.readyTrades, ...pendingImport.duplicateMatches],
+                    pendingImport.skippedById,
+                  )
+                }
+              >
+                {isSaving ? "Importing..." : "Import anyway"}
+              </button>
             </div>
           </section>
         </div>

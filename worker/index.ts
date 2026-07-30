@@ -19,6 +19,23 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+function withNoStoreForHtml(request: Request, response: Response) {
+  const acceptsHtml = request.headers.get("accept")?.includes("text/html") ?? false;
+  const isHtml = response.headers.get("content-type")?.includes("text/html") ?? false;
+
+  if (!acceptsHtml && !isHtml) {
+    return response;
+  }
+
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+}
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -45,7 +62,8 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx);
+    return withNoStoreForHtml(request, response);
   },
 };
 

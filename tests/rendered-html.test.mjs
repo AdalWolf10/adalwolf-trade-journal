@@ -34,9 +34,21 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /Report Range/);
   assert.match(source, /Current Year/);
   assert.match(source, /custom-month-range/);
-  assert.match(source, /Export Excel/);
+  assert.match(source, /Data <span/);
+  assert.match(source, /data-menu-panel/);
+  assert.match(source, /Export Current View/);
   assert.match(source, /Excel Template/);
+  assert.match(source, /Import JSON or Excel/);
   assert.match(source, /parseXlsxTrades/);
+  assert.match(source, /tradeFingerprint/);
+  assert.match(source, /filenamePart/);
+  assert.match(source, /range: reportRange/);
+  assert.match(source, /Possible duplicate trades/);
+  assert.match(source, /Skip duplicates/);
+  assert.match(source, /Import anyway/);
+  assert.match(source, /already skipped by ID/);
+  assert.match(source, /"ID"/);
+  assert.match(source, /"id"/);
   assert.match(source, /showDatePicker/);
   assert.match(source, /date-picker-input/);
   assert.match(source, /sort-header/);
@@ -52,8 +64,9 @@ test("defines the exit strategy journal shell", async () => {
   assert.doesNotMatch(source, /Exit Comparison|Strategy Totals/);
   assert.match(source, /Daily Net Cumulative R/);
   assert.match(source, /trade days/);
-  assert.match(source, /Export JSON/);
-  assert.match(source, /Export CSV/);
+  assert.doesNotMatch(source, /Export JSON/);
+  assert.doesNotMatch(source, /Export CSV/);
+  assert.doesNotMatch(source, /Export Excel/);
   assert.doesNotMatch(source, /Add Sample/);
   assert.doesNotMatch(source, /buildMonthOptions/);
   assert.doesNotMatch(
@@ -78,6 +91,7 @@ test("wires the hosted exit journal data model", async () => {
     packageJson,
     schema,
     route,
+    worker,
     hosting,
     tradeMigration,
     authMigration,
@@ -93,6 +107,7 @@ test("wires the hosted exit journal data model", async () => {
       readFile(new URL("../package.json", import.meta.url), "utf8"),
       readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/trades/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
       readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0000_colossal_ironclad.sql", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0001_swift_kate_bishop.sql", import.meta.url), "utf8"),
@@ -120,7 +135,15 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(logout, /makeExpiredSessionCookie/);
   assert.match(route, /requireAuthenticatedRequest/);
   assert.match(route, /actualR = beHit === "No" \? -1/);
-  assert.match(layout, /Exit Strategy Journal/);
+  assert.match(pageRoute, /title: "Dashboard"/);
+  assert.match(route, /parsed\.id/);
+  assert.match(route, /trade already exists/);
+  assert.match(layout, /Welcome/);
+  assert.match(layout, /force-dynamic/);
+  assert.match(layout, /revalidate = 0/);
+  assert.match(worker, /withNoStoreForHtml/);
+  assert.match(worker, /private, no-store, max-age=0, must-revalidate/);
+  assert.doesNotMatch(layout, /Exit Strategy Journal/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /twitter/);
   assert.match(layout, /\/og\.png/);

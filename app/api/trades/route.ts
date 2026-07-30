@@ -24,6 +24,7 @@ function toNumber(value: unknown) {
 }
 
 function parsePayload(payload: TradePayload) {
+  const id = typeof payload.id === "string" ? payload.id.trim() : "";
   const date = typeof payload.date === "string" ? payload.date : "";
   const beHit = payload.beHit === "No" ? "No" : payload.beHit === "Yes" ? "Yes" : "";
   const firstTpR = toNumber(payload.firstTpR);
@@ -34,6 +35,10 @@ function parsePayload(payload: TradePayload) {
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { error: "date is required" };
+  }
+
+  if (id && !/^[A-Za-z0-9_-]{8,100}$/.test(id)) {
+    return { error: "id format is not valid" };
   }
 
   if (!beHit) {
@@ -53,6 +58,7 @@ function parsePayload(payload: TradePayload) {
   }
 
   return {
+    id: id || undefined,
     trade: {
       date,
       beHit,
@@ -111,10 +117,24 @@ export async function POST(request: Request) {
 
     const now = Date.now();
     const db = getDb();
+    const id = parsed.id ?? makeId();
+
+    if (parsed.id) {
+      const [existingTrade] = await db
+        .select({ id: exitTrades.id })
+        .from(exitTrades)
+        .where(eq(exitTrades.id, parsed.id))
+        .limit(1);
+
+      if (existingTrade) {
+        return Response.json({ error: "trade already exists" }, { status: 409 });
+      }
+    }
+
     const [trade] = await db
       .insert(exitTrades)
       .values({
-        id: makeId(),
+        id,
         ...parsed.trade,
         createdAt: now,
         updatedAt: now,

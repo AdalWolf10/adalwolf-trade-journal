@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -13,9 +16,8 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const title = "Exit Strategy Journal";
-const description =
-  "A focused R-based trade journal for comparing actual exits against First TP, 1.5R, 2R, and 3R strategies.";
+const title = "Welcome";
+const description = "Private dashboard access.";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -43,7 +45,7 @@ export async function generateMetadata(): Promise<Metadata> {
           url: "/og.png",
           width: 1200,
           height: 630,
-          alt: "Exit Strategy Journal dashboard preview",
+          alt: "Private dashboard preview",
         },
       ],
     },
