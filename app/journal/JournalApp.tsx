@@ -1145,27 +1145,8 @@ export default function Home() {
     return strategyRows.map((row) => ({
       ...row,
       delta: row.total - actualTotal,
-    }));
+    })).sort((left, right) => right.total - left.total);
   }, [strategyRows]);
-
-  const bestExitAlternative = useMemo(
-    () => {
-      const alternatives = exitComparisonRows.filter((row) => row.key !== "actual");
-      return alternatives.reduce(
-        (best, row) => (row.total > best.total ? row : best),
-        alternatives[0] ?? {
-          average: 0,
-          delta: 0,
-          key: "firstTp",
-          label: "First TP",
-          total: 0,
-          values: [],
-          winRate: 0,
-        },
-      );
-    },
-    [exitComparisonRows],
-  );
 
   const monthlyStats = useMemo(() => {
     const totalActual = monthlyTrades.reduce((sum, trade) => sum + trade.actualR, 0);
@@ -1268,7 +1249,6 @@ export default function Home() {
     [stats.beRate, stats.captureRate, stats.profitFactor, stats.winRate],
   );
 
-  const maxStrategyTotal = Math.max(1, ...strategyRows.map((item) => Math.abs(item.total)));
   const selectedMonthLabel = monthLabel(selectedMonth);
 
   function goToMonth(key: string) {
@@ -1715,143 +1695,145 @@ export default function Home() {
       {notice ? <p className="notice dashboard-notice">{notice}</p> : null}
 
       <section className="dashboard-grid" aria-label="Monthly dashboard">
-        <article className="review-panel calendar-panel calendar-dominant">
-          <div className="panel-heading compact">
-            <div>
-              <p className="eyebrow">Calendar</p>
-              <h2>{selectedMonthLabel} Actual R</h2>
-            </div>
-            <div className="month-summary">
-              <span>
-                Actual <strong className={toneClass(monthlyStats.totalActual)}>{rValue(monthlyStats.totalActual)}</strong>
-              </span>
-              <span>
-                Win <strong>{percent(monthlyStats.winRate)}</strong>
-              </span>
-              <span>
-                Best <strong>{monthlyStats.best.label}</strong>
-              </span>
-            </div>
-          </div>
-          <div className="calendar-layout">
-            <div className="calendar-grid">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                <strong className="calendar-head" key={day}>
-                  {day}
-                </strong>
-              ))}
-              {calendarCells.map((cell, index) => (
-                <div
-                  className={`calendar-cell ${cell.day ? toneClass(cell.total) : "blank"}`}
-                  key={`${cell.date}-${index}`}
-                >
-                  {cell.day ? (
-                    <>
-                      <span>{cell.day}</span>
-                      <strong>{cell.count ? rValue(cell.total) : ""}</strong>
-                      <small>{cell.count ? `${cell.count} trades` : ""}</small>
-                    </>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-            <div className="weekly-list">
-              {weeklyRows.map((week) => (
-                <div className="weekly-row" key={week.label}>
-                  <span>{week.label}</span>
-                  <strong className={toneClass(week.total)}>
-                    {week.tradeDays ? rValue(week.total) : "--"}
-                  </strong>
-                  <small>{week.tradeDays ? `${week.tradeDays} trade days` : "No trades"}</small>
-                </div>
-              ))}
-            </div>
-          </div>
-        </article>
-
-        <section className="operations-grid" aria-label="Trade operations">
-          <section className="log-panel" aria-labelledby="log-heading">
-            <div className="panel-heading">
+        <section className="dashboard-main-column">
+          <article className="review-panel calendar-panel calendar-dominant">
+            <div className="panel-heading compact">
               <div>
-                <p className="eyebrow">Trade Log</p>
-                <h2 id="log-heading">{reportRange.label}</h2>
+                <p className="eyebrow">Calendar</p>
+                <h2>{selectedMonthLabel} Actual R</h2>
               </div>
-              <div className="panel-actions">
-                <button className="utility-button" type="button" onClick={() => void loadTrades()}>
-                  Refresh
-                </button>
+              <div className="month-summary">
+                <span>
+                  Actual <strong className={toneClass(monthlyStats.totalActual)}>{rValue(monthlyStats.totalActual)}</strong>
+                </span>
+                <span>
+                  Win <strong>{percent(monthlyStats.winRate)}</strong>
+                </span>
+                <span>
+                  Best <strong>{monthlyStats.best.label}</strong>
+                </span>
               </div>
             </div>
+            <div className="calendar-layout">
+              <div className="calendar-grid">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                  <strong className="calendar-head" key={day}>
+                    {day}
+                  </strong>
+                ))}
+                {calendarCells.map((cell, index) => (
+                  <div
+                    className={`calendar-cell ${cell.day ? toneClass(cell.total) : "blank"}`}
+                    key={`${cell.date}-${index}`}
+                  >
+                    {cell.day ? (
+                      <>
+                        <span>{cell.day}</span>
+                        <strong>{cell.count ? rValue(cell.total) : ""}</strong>
+                        <small>{cell.count ? `${cell.count} trades` : ""}</small>
+                      </>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              <div className="weekly-list">
+                {weeklyRows.map((week) => (
+                  <div className="weekly-row" key={week.label}>
+                    <span>{week.label}</span>
+                    <strong className={toneClass(week.total)}>
+                      {week.tradeDays ? rValue(week.total) : "--"}
+                    </strong>
+                    <small>{week.tradeDays ? `${week.tradeDays} trade days` : "No trades"}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </article>
 
-            <div className="trade-table-wrap">
-              <table className="trade-table">
-                <thead>
-                  <tr>
-                    {sortableTradeColumns.map((column) => (
-                      <th key={column.key}>
-                        <button
-                          className={`sort-header ${tradeSort.key === column.key ? "active" : ""}`}
-                          type="button"
-                          onClick={() => toggleTradeSort(column.key)}
-                        >
-                          {column.label}
-                          <span>{sortIndicator(column.key)}</span>
-                        </button>
-                      </th>
-                    ))}
-                    <th>Notes</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedReportTrades.map((trade) => {
-                    const result = strategyResult(trade);
-                    return (
-                      <tr key={trade.id}>
-                        <td>{trade.date}</td>
-                        <td>{dayName(trade.date)}</td>
-                        <td>
-                          <span className={trade.beHit === "Yes" ? "be-pill yes" : "be-pill no"}>
-                            {trade.beHit}
-                          </span>
-                        </td>
-                        <td>{rValue(trade.firstTpR)}</td>
-                        <td>{rValue(trade.maxR)}</td>
-                        <td className={toneClass(trade.actualR)}>{rValue(trade.actualR)}</td>
-                        <td className={toneClass(result.firstTp)}>{rValue(result.firstTp)}</td>
-                        <td className={toneClass(result.onePointFive)}>
-                          {rValue(result.onePointFive)}
-                        </td>
-                        <td className={toneClass(result.twoR)}>{rValue(result.twoR)}</td>
-                        <td className={toneClass(result.threeR)}>{rValue(result.threeR)}</td>
-                        <td className="notes-cell">{trade.notes || "No note"}</td>
-                        <td>
-                          <div className="table-actions">
-                            <button className="table-action" type="button" onClick={() => editTrade(trade)}>
-                              Edit
-                            </button>
-                            <button
-                              className="table-action danger"
-                              type="button"
-                              onClick={() => void deleteTrade(trade.id)}
-                            >
-                              Delete
-                            </button>
-                          </div>
+          <section className="operations-grid" aria-label="Trade operations">
+            <section className="log-panel" aria-labelledby="log-heading">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Trade Log</p>
+                  <h2 id="log-heading">{reportRange.label}</h2>
+                </div>
+                <div className="panel-actions">
+                  <button className="utility-button" type="button" onClick={() => void loadTrades()}>
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              <div className="trade-table-wrap">
+                <table className="trade-table">
+                  <thead>
+                    <tr>
+                      {sortableTradeColumns.map((column) => (
+                        <th key={column.key}>
+                          <button
+                            className={`sort-header ${tradeSort.key === column.key ? "active" : ""}`}
+                            type="button"
+                            onClick={() => toggleTradeSort(column.key)}
+                          >
+                            {column.label}
+                            <span>{sortIndicator(column.key)}</span>
+                          </button>
+                        </th>
+                      ))}
+                      <th>Notes</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedReportTrades.map((trade) => {
+                      const result = strategyResult(trade);
+                      return (
+                        <tr key={trade.id}>
+                          <td>{trade.date}</td>
+                          <td>{dayName(trade.date)}</td>
+                          <td>
+                            <span className={trade.beHit === "Yes" ? "be-pill yes" : "be-pill no"}>
+                              {trade.beHit}
+                            </span>
+                          </td>
+                          <td>{rValue(trade.firstTpR)}</td>
+                          <td>{rValue(trade.maxR)}</td>
+                          <td className={toneClass(trade.actualR)}>{rValue(trade.actualR)}</td>
+                          <td className={toneClass(result.firstTp)}>{rValue(result.firstTp)}</td>
+                          <td className={toneClass(result.onePointFive)}>
+                            {rValue(result.onePointFive)}
+                          </td>
+                          <td className={toneClass(result.twoR)}>{rValue(result.twoR)}</td>
+                          <td className={toneClass(result.threeR)}>{rValue(result.threeR)}</td>
+                          <td className="notes-cell">{trade.notes || "No note"}</td>
+                          <td>
+                            <div className="table-actions">
+                              <button className="table-action" type="button" onClick={() => editTrade(trade)}>
+                                Edit
+                              </button>
+                              <button
+                                className="table-action danger"
+                                type="button"
+                                onClick={() => void deleteTrade(trade.id)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!sortedReportTrades.length ? (
+                      <tr>
+                        <td className="empty-row" colSpan={12}>
+                          {isLoading ? "Loading trades..." : "No trades logged for this range yet."}
                         </td>
                       </tr>
-                    );
-                  })}
-                  {!sortedReportTrades.length ? (
-                    <tr>
-                      <td className="empty-row" colSpan={12}>
-                        {isLoading ? "Loading trades..." : "No trades logged for this range yet."}
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </section>
         </section>
 
@@ -1885,26 +1867,26 @@ export default function Home() {
             </div>
           </article>
 
-          <article className="review-panel exit-comparison-panel">
+          <article className="review-panel strategy-ranking-panel">
             <div className="panel-heading compact">
               <div>
-                <p className="eyebrow">Comparison</p>
-                <h2>Exit Comparison</h2>
+                <p className="eyebrow">Ranking</p>
+                <h2>Strategy Ranking</h2>
               </div>
-              <span className="status-pill">{bestExitAlternative.label}</span>
+              <span className="status-pill">{exitComparisonRows[0]?.label ?? "--"}</span>
             </div>
-            <p className="comparison-summary">
-              Best alternate is {bestExitAlternative.label} at {rValue(bestExitAlternative.total)}
-              {" "}({signedRValue(bestExitAlternative.delta)} vs actual).
-            </p>
-            <div className="comparison-list">
-              {exitComparisonRows.map((row) => (
-                <div className={`comparison-row ${row.key === "actual" ? "actual" : ""}`} key={row.key}>
-                  <span>{row.label}</span>
-                  <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
-                  <small>
-                    {row.key === "actual" ? "Your logged exits" : `${signedRValue(row.delta)} vs actual`}
-                  </small>
+            <div className="strategy-ranking-list">
+              {exitComparisonRows.map((row, index) => (
+                <div className={`ranking-row ${row.key === "actual" ? "actual" : ""}`} key={row.key}>
+                  <span className="rank-badge">#{index + 1}</span>
+                  <div>
+                    <strong>{row.label}</strong>
+                    <small>{row.key === "actual" ? "Your logged exits" : `${signedRValue(row.delta)} vs actual`}</small>
+                  </div>
+                  <div className="ranking-result">
+                    <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
+                    <small>{percent(row.winRate)} win</small>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1924,31 +1906,6 @@ export default function Home() {
             </svg>
           </article>
 
-          <article className="review-panel">
-            <div className="panel-heading compact">
-              <div>
-                <p className="eyebrow">Comparison</p>
-                <h2>Strategy Totals</h2>
-              </div>
-            </div>
-            <div className="strategy-list compact-strategy">
-              {strategyRows.map((row) => (
-                <div className="strategy-row" key={row.key}>
-                  <div>
-                    <strong>{row.label}</strong>
-                    <span>{percent(row.winRate)} win</span>
-                  </div>
-                  <div className="bar-track">
-                    <span
-                      className={row.total >= 0 ? "bar-positive" : "bar-negative"}
-                      style={{ width: `${Math.max(5, (Math.abs(row.total) / maxStrategyTotal) * 100)}%` }}
-                    />
-                  </div>
-                  <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
-                </div>
-              ))}
-            </div>
-          </article>
         </aside>
       </section>
 

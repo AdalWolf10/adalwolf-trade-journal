@@ -42,8 +42,9 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /sortedReportTrades/);
   assert.match(source, /modal-backdrop/);
   assert.match(source, /entry-modal/);
-  assert.match(source, /Exit Comparison/);
-  assert.match(source, /Strategy Totals/);
+  assert.match(source, /Strategy Ranking/);
+  assert.match(source, /strategy-ranking-list/);
+  assert.doesNotMatch(source, /Exit Comparison|Strategy Totals/);
   assert.match(source, /Daily Net Cumulative R/);
   assert.match(source, /trade days/);
   assert.match(source, /Export JSON/);
