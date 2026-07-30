@@ -29,6 +29,9 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /function shiftMonth/);
   assert.match(source, /Month tabs/);
   assert.match(source, /month-tabs/);
+  assert.match(source, /Report Range/);
+  assert.match(source, /Current Year/);
+  assert.match(source, /custom-month-range/);
   assert.match(source, /Export Excel/);
   assert.match(source, /Excel Template/);
   assert.match(source, /parseXlsxTrades/);
@@ -36,7 +39,7 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /date-picker-input/);
   assert.match(source, /sort-header/);
   assert.match(source, /↕/);
-  assert.match(source, /sortedMonthlyTrades/);
+  assert.match(source, /sortedReportTrades/);
   assert.match(source, /modal-backdrop/);
   assert.match(source, /entry-modal/);
   assert.match(source, /Exit Comparison/);
@@ -45,6 +48,7 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /trade days/);
   assert.match(source, /Export JSON/);
   assert.match(source, /Export CSV/);
+  assert.doesNotMatch(source, /Add Sample/);
   assert.doesNotMatch(source, /buildMonthOptions/);
   assert.doesNotMatch(
     source,

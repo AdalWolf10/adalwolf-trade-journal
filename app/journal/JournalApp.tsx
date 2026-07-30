@@ -44,6 +44,15 @@ type TradeSort = {
   key: TradeSortKey;
 };
 
+type ReportMode = "month" | "year" | "all" | "custom";
+
+const reportOptions: Array<{ label: string; mode: ReportMode }> = [
+  { label: "Selected Month", mode: "month" },
+  { label: "Current Year", mode: "year" },
+  { label: "All", mode: "all" },
+  { label: "Custom", mode: "custom" },
+];
+
 const sortableTradeColumns: Array<{ key: TradeSortKey; label: string }> = [
   { key: "date", label: "Date" },
   { key: "day", label: "Day" },
@@ -58,41 +67,6 @@ const sortableTradeColumns: Array<{ key: TradeSortKey; label: string }> = [
 ];
 
 const initialMonth = currentMonthKey();
-
-const sampleTrades: DraftTrade[] = [
-  {
-    date: "2026-07-06",
-    beHit: "Yes",
-    firstTpR: 1,
-    maxR: 1.7,
-    actualR: 0.8,
-    notes: "Reached first target and 1.5R, then faded before 2R.",
-  },
-  {
-    date: "2026-07-08",
-    beHit: "No",
-    firstTpR: 1,
-    maxR: 0.4,
-    actualR: -1,
-    notes: "Never protected the trade; full stop.",
-  },
-  {
-    date: "2026-07-10",
-    beHit: "Yes",
-    firstTpR: 1.1,
-    maxR: 3.2,
-    actualR: 2.1,
-    notes: "Runner reached 3R. Good patience after first TP.",
-  },
-  {
-    date: "2026-07-14",
-    beHit: "Yes",
-    firstTpR: 0.8,
-    maxR: 1.1,
-    actualR: 0,
-    notes: "BE protected the trade, but target selection was too tight.",
-  },
-];
 
 function currentMonthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -143,6 +117,18 @@ function dayName(date: string) {
 
 function monthKey(date: string) {
   return date.slice(0, 7);
+}
+
+function isMonthKey(value: string) {
+  return /^\d{4}-\d{2}$/.test(value);
+}
+
+function normalizeMonthRange(start: string, end: string) {
+  const safeStart = isMonthKey(start) ? start : initialMonth;
+  const safeEnd = isMonthKey(end) ? end : safeStart;
+  return safeStart <= safeEnd
+    ? { from: safeStart, to: safeEnd }
+    : { from: safeEnd, to: safeStart };
 }
 
 function daysInMonth(key: string) {
@@ -921,6 +907,9 @@ export default function Home() {
   const [trades, setTrades] = useState<ExitTrade[]>([]);
   const [draft, setDraft] = useState<DraftTrade>(() => defaultDraft());
   const [selectedMonth, setSelectedMonth] = useState(initialMonth);
+  const [reportMode, setReportMode] = useState<ReportMode>("month");
+  const [customStartMonth, setCustomStartMonth] = useState(initialMonth);
+  const [customEndMonth, setCustomEndMonth] = useState(initialMonth);
   const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isEntryOpen, setIsEntryOpen] = useState(false);
@@ -977,9 +966,57 @@ export default function Home() {
     [selectedMonth, sortedTrades],
   );
 
-  const sortedMonthlyTrades = useMemo(
-    () => [...monthlyTrades].sort((left, right) => compareTradesForSort(left, right, tradeSort)),
-    [monthlyTrades, tradeSort],
+  const currentReportYear = currentMonthKey().slice(0, 4);
+  const reportRange = useMemo(() => {
+    if (reportMode === "all") {
+      return {
+        label: "All trades",
+        mode: reportMode,
+      };
+    }
+
+    if (reportMode === "year") {
+      return {
+        label: `Current Year (${currentReportYear})`,
+        mode: reportMode,
+        year: currentReportYear,
+      };
+    }
+
+    const range =
+      reportMode === "custom"
+        ? normalizeMonthRange(customStartMonth, customEndMonth)
+        : { from: selectedMonth, to: selectedMonth };
+
+    return {
+      ...range,
+      label:
+        range.from === range.to
+          ? monthLabel(range.from)
+          : `${monthTabLabel(range.from)} - ${monthTabLabel(range.to)}`,
+      mode: reportMode,
+    };
+  }, [currentReportYear, customEndMonth, customStartMonth, reportMode, selectedMonth]);
+
+  const reportTrades = useMemo(
+    () =>
+      sortedTrades.filter((trade) => {
+        if (reportRange.mode === "all") {
+          return true;
+        }
+        if (reportRange.mode === "year") {
+          return trade.date.startsWith(`${reportRange.year}-`);
+        }
+
+        const key = monthKey(trade.date);
+        return key >= (reportRange.from ?? selectedMonth) && key <= (reportRange.to ?? selectedMonth);
+      }),
+    [reportRange, selectedMonth, sortedTrades],
+  );
+
+  const sortedReportTrades = useMemo(
+    () => [...reportTrades].sort((left, right) => compareTradesForSort(left, right, tradeSort)),
+    [reportTrades, tradeSort],
   );
 
   const monthTabs = useMemo(() => {
@@ -1015,27 +1052,27 @@ export default function Home() {
       {
         key: "actual",
         label: "Actual",
-        values: trades.map((trade) => trade.actualR),
+        values: reportTrades.map((trade) => trade.actualR),
       },
       {
         key: "firstTp",
         label: "First TP",
-        values: trades.map((trade) => strategyResult(trade).firstTp),
+        values: reportTrades.map((trade) => strategyResult(trade).firstTp),
       },
       {
         key: "onePointFive",
         label: "1.5R",
-        values: trades.map((trade) => strategyResult(trade).onePointFive),
+        values: reportTrades.map((trade) => strategyResult(trade).onePointFive),
       },
       {
         key: "twoR",
         label: "2R",
-        values: trades.map((trade) => strategyResult(trade).twoR),
+        values: reportTrades.map((trade) => strategyResult(trade).twoR),
       },
       {
         key: "threeR",
         label: "3R",
-        values: trades.map((trade) => strategyResult(trade).threeR),
+        values: reportTrades.map((trade) => strategyResult(trade).threeR),
       },
     ];
 
@@ -1049,32 +1086,32 @@ export default function Home() {
         winRate: strategy.values.length ? (wins / strategy.values.length) * 100 : 0,
       };
     });
-  }, [trades]);
+  }, [reportTrades]);
 
   const stats = useMemo(() => {
-    const totalActual = trades.reduce((sum, trade) => sum + trade.actualR, 0);
-    const totalMax = trades.reduce((sum, trade) => sum + trade.maxR, 0);
-    const winners = trades.filter((trade) => trade.actualR > 0);
-    const losers = trades.filter((trade) => trade.actualR < 0);
+    const totalActual = reportTrades.reduce((sum, trade) => sum + trade.actualR, 0);
+    const totalMax = reportTrades.reduce((sum, trade) => sum + trade.maxR, 0);
+    const winners = reportTrades.filter((trade) => trade.actualR > 0);
+    const losers = reportTrades.filter((trade) => trade.actualR < 0);
     const wins = winners.length;
-    const beHits = trades.filter((trade) => trade.beHit === "Yes").length;
+    const beHits = reportTrades.filter((trade) => trade.beHit === "Yes").length;
     const grossWin = winners.reduce((sum, trade) => sum + trade.actualR, 0);
     const grossLoss = Math.abs(losers.reduce((sum, trade) => sum + trade.actualR, 0));
     const avgWin = winners.length ? grossWin / winners.length : 0;
     const avgLoss = losers.length ? grossLoss / losers.length : 0;
     const profitFactor = grossLoss ? grossWin / grossLoss : grossWin ? Infinity : 0;
     const avgWinLoss = avgLoss ? avgWin / avgLoss : avgWin ? Infinity : 0;
-    const avgMax = trades.length
-      ? trades.reduce((sum, trade) => sum + trade.maxR, 0) / trades.length
+    const avgMax = reportTrades.length
+      ? reportTrades.reduce((sum, trade) => sum + trade.maxR, 0) / reportTrades.length
       : 0;
     const bestMethod = strategyRows.reduce(
       (best, row) => (row.total > best.total ? row : best),
       strategyRows[0] ?? { label: "Actual", total: 0 },
     );
 
-    const winRate = trades.length ? (wins / trades.length) * 100 : 0;
+    const winRate = reportTrades.length ? (wins / reportTrades.length) * 100 : 0;
     const captureRate = totalMax ? (totalActual / totalMax) * 100 : 0;
-    const beRate = trades.length ? (beHits / trades.length) * 100 : 0;
+    const beRate = reportTrades.length ? (beHits / reportTrades.length) * 100 : 0;
     const score = clamp(
       winRate * 0.28 +
         clamp(captureRate, 0, 100) * 0.28 +
@@ -1085,7 +1122,7 @@ export default function Home() {
     );
 
     return {
-      avgActual: trades.length ? totalActual / trades.length : 0,
+      avgActual: reportTrades.length ? totalActual / reportTrades.length : 0,
       avgMax,
       avgWinLoss,
       beRate,
@@ -1097,11 +1134,11 @@ export default function Home() {
       profitFactor,
       score,
       totalActual,
-      trades: trades.length,
+      trades: reportTrades.length,
       winRate,
       wins,
     };
-  }, [strategyRows, trades]);
+  }, [reportTrades, strategyRows]);
 
   const exitComparisonRows = useMemo(() => {
     const actualTotal = strategyRows.find((row) => row.key === "actual")?.total ?? 0;
@@ -1204,16 +1241,16 @@ export default function Home() {
   );
 
   const cumulativeSeries = useMemo(() => {
-    const monthAscending = [...monthlyTrades].sort((a, b) => {
+    const reportAscending = [...reportTrades].sort((a, b) => {
       const dateSort = a.date.localeCompare(b.date);
       return dateSort || (a.createdAt ?? 0) - (b.createdAt ?? 0);
     });
 
-    return monthAscending.reduce<number[]>(
+    return reportAscending.reduce<number[]>(
       (points, trade) => [...points, (points.at(-1) ?? 0) + trade.actualR],
       [0],
     );
-  }, [monthlyTrades]);
+  }, [reportTrades]);
 
   const cumulativeChart = useMemo(() => chartShape(cumulativeSeries), [cumulativeSeries]);
 
@@ -1360,36 +1397,6 @@ export default function Home() {
       setNotice("Trade deleted.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to delete trade");
-    }
-  }
-
-  async function addSampleTrades() {
-    setIsSaving(true);
-    setNotice("");
-    try {
-      const saved: ExitTrade[] = [];
-      for (const trade of sampleTrades) {
-        const response = await fetch("/api/trades", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(trade),
-        });
-        if (handleUnauthorized(response)) {
-          return;
-        }
-        const data = (await response.json()) as { trade?: ExitTrade; error?: string };
-        if (!response.ok || !data.trade) {
-          throw new Error(data.error ?? "Unable to add sample trades");
-        }
-        saved.push(data.trade);
-      }
-      setTrades((current) => [...saved, ...current]);
-      setSelectedMonth("2026-07");
-      setNotice("Sample trades added.");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Unable to add sample trades");
-    } finally {
-      setIsSaving(false);
     }
   }
 
@@ -1585,7 +1592,71 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="metric-grid" aria-label="Journal statistics">
+      <section className="month-switcher" aria-label="Month navigation">
+        <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
+          &lt;
+        </button>
+        <nav className="month-tabs" aria-label="Month tabs">
+          {monthTabs.map((month) => (
+            <button
+              className={selectedMonth === month.key ? "active" : ""}
+              key={month.key}
+              type="button"
+              onClick={() => goToMonth(month.key)}
+            >
+              <span>{month.label}</span>
+              <small>{month.count} trades</small>
+            </button>
+          ))}
+        </nav>
+        <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
+          &gt;
+        </button>
+        <button className="utility-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
+          This month
+        </button>
+      </section>
+
+      <section className="report-range-panel" aria-label="Report range">
+        <div className="report-range-title">
+          <p className="eyebrow">Report Range</p>
+          <h2>{reportRange.label}</h2>
+        </div>
+        <div className="report-controls" role="group" aria-label="Choose report range">
+          {reportOptions.map((option) => (
+            <button
+              className={reportMode === option.mode ? "active" : ""}
+              key={option.mode}
+              type="button"
+              onClick={() => setReportMode(option.mode)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {reportMode === "custom" ? (
+          <div className="custom-month-range">
+            <label>
+              From
+              <input
+                type="month"
+                value={customStartMonth}
+                onChange={(event) => setCustomStartMonth(event.target.value)}
+              />
+            </label>
+            <label>
+              To
+              <input
+                type="month"
+                value={customEndMonth}
+                onChange={(event) => setCustomEndMonth(event.target.value)}
+              />
+            </label>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="metric-grid" aria-label={`Journal statistics for ${reportRange.label}`}>
         <article className="metric-card primary-metric">
           <span>Net Actual R</span>
           <strong className={toneClass(stats.totalActual)}>{rValue(stats.totalActual)}</strong>
@@ -1639,31 +1710,6 @@ export default function Home() {
           <strong>{stats.score.toFixed(1)}</strong>
           <small>0-100</small>
         </article>
-      </section>
-
-      <section className="month-switcher" aria-label="Month navigation">
-        <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
-          &lt;
-        </button>
-        <nav className="month-tabs" aria-label="Month tabs">
-          {monthTabs.map((month) => (
-            <button
-              className={selectedMonth === month.key ? "active" : ""}
-              key={month.key}
-              type="button"
-              onClick={() => goToMonth(month.key)}
-            >
-              <span>{month.label}</span>
-              <small>{month.count} trades</small>
-            </button>
-          ))}
-        </nav>
-        <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
-          &gt;
-        </button>
-        <button className="utility-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
-          This month
-        </button>
       </section>
 
       {notice ? <p className="notice dashboard-notice">{notice}</p> : null}
@@ -1728,19 +1774,11 @@ export default function Home() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Trade Log</p>
-                <h2 id="log-heading">{selectedMonthLabel}</h2>
+                <h2 id="log-heading">{reportRange.label}</h2>
               </div>
               <div className="panel-actions">
                 <button className="utility-button" type="button" onClick={() => void loadTrades()}>
                   Refresh
-                </button>
-                <button
-                  className="utility-button"
-                  disabled={isSaving}
-                  type="button"
-                  onClick={() => void addSampleTrades()}
-                >
-                  Add Sample
                 </button>
               </div>
             </div>
@@ -1766,7 +1804,7 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedMonthlyTrades.map((trade) => {
+                  {sortedReportTrades.map((trade) => {
                     const result = strategyResult(trade);
                     return (
                       <tr key={trade.id}>
@@ -1804,10 +1842,10 @@ export default function Home() {
                       </tr>
                     );
                   })}
-                  {!sortedMonthlyTrades.length ? (
+                  {!sortedReportTrades.length ? (
                     <tr>
                       <td className="empty-row" colSpan={12}>
-                        {isLoading ? "Loading trades..." : "No trades logged for this month yet."}
+                        {isLoading ? "Loading trades..." : "No trades logged for this range yet."}
                       </td>
                     </tr>
                   ) : null}

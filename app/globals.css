@@ -184,6 +184,9 @@ h2 {
 .panel-actions,
 .formula-preview,
 .month-summary,
+.report-range-panel,
+.report-controls,
+.custom-month-range,
 .table-actions {
   display: flex;
   align-items: center;
@@ -201,7 +204,8 @@ h2 {
 .primary-button,
 .table-action,
 .nav-icon,
-.month-tabs button {
+.month-tabs button,
+.report-controls button {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -224,7 +228,8 @@ h2 {
 .utility-button:hover,
 .table-action:hover,
 .nav-icon:hover,
-.month-tabs button:hover {
+.month-tabs button:hover,
+.report-controls button:hover {
   border-color: #4b5160;
   background: #171a20;
   transform: translateY(-1px);
@@ -262,7 +267,7 @@ h2 {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
-  margin: 18px 0 12px;
+  margin: 0 0 12px;
 }
 
 .metric-card,
@@ -421,6 +426,51 @@ h2 {
 .month-tabs small {
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.report-range-panel {
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid rgba(50, 54, 64, 0.88);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(22, 23, 28, 0.98), rgba(17, 18, 22, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.report-range-title {
+  min-width: 170px;
+}
+
+.report-range-title h2 {
+  margin-top: 3px;
+}
+
+.report-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.report-controls button {
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.report-controls button.active {
+  border-color: rgba(143, 103, 255, 0.8);
+  background: linear-gradient(135deg, rgba(109, 82, 255, 0.34), rgba(32, 34, 41, 0.95));
+  color: #ffffff;
+}
+
+.custom-month-range {
+  gap: 10px;
+  min-width: min(100%, 300px);
+}
+
+.custom-month-range label {
+  min-width: 132px;
 }
 
 .dashboard-grid {
@@ -1029,17 +1079,20 @@ textarea:focus {
 
   .topbar,
   .field-row,
+  .report-range-panel,
   .panel-heading {
     align-items: stretch;
     flex-direction: column;
   }
 
   .topbar-actions,
+  .report-controls,
   .panel-actions {
     justify-content: stretch;
   }
 
   .topbar-actions > *,
+  .report-controls > *,
   .panel-actions > * {
     flex: 1;
   }
@@ -1087,6 +1140,11 @@ textarea:focus {
 
   .strategy-row {
     grid-template-columns: 1fr;
+  }
+
+  .custom-month-range {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 
