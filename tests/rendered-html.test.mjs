@@ -44,6 +44,9 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /sortedReportTrades/);
   assert.match(source, /modal-backdrop/);
   assert.match(source, /entry-modal/);
+  assert.match(source, /Security/);
+  assert.match(source, /Change Password/);
+  assert.match(source, /\/api\/auth\/password/);
   assert.match(source, /Strategy Ranking/);
   assert.match(source, /strategy-ranking-list/);
   assert.doesNotMatch(source, /Exit Comparison|Strategy Totals/);
@@ -64,12 +67,27 @@ test("defines the exit strategy journal shell", async () => {
 });
 
 test("wires the hosted exit journal data model", async () => {
-  const [journal, pageRoute, auth, login, logout, layout, packageJson, schema, route, hosting, migration] =
+  const [
+    journal,
+    pageRoute,
+    auth,
+    login,
+    passwordRoute,
+    logout,
+    layout,
+    packageJson,
+    schema,
+    route,
+    hosting,
+    tradeMigration,
+    authMigration,
+  ] =
     await Promise.all([
       readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/page.tsx", import.meta.url), "utf8"),
       readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/auth/login/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/api/auth/password/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/auth/logout/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
       readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -77,6 +95,7 @@ test("wires the hosted exit journal data model", async () => {
       readFile(new URL("../app/api/trades/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0000_colossal_ironclad.sql", import.meta.url), "utf8"),
+      readFile(new URL("../drizzle/0001_swift_kate_bishop.sql", import.meta.url), "utf8"),
     ]);
 
   assert.match(journal, /fetch\("\/api\/trades"/);
@@ -90,7 +109,14 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(pageRoute, /redirect\("\/"\)/);
   assert.match(auth, /JOURNAL_USERNAME/);
   assert.match(auth, /SESSION_SECRET/);
+  assert.match(auth, /JOURNAL_PASSWORD_HASH/);
+  assert.match(auth, /PBKDF2/);
+  assert.match(auth, /LOGIN_MAX_FAILURES/);
   assert.match(login, /Set-Cookie/);
+  assert.match(login, /checkLoginThrottle/);
+  assert.match(login, /recordFailedLogin/);
+  assert.match(passwordRoute, /updateStoredPassword/);
+  assert.match(passwordRoute, /validateCurrentPassword/);
   assert.match(logout, /makeExpiredSessionCookie/);
   assert.match(route, /requireAuthenticatedRequest/);
   assert.match(route, /actualR = beHit === "No" \? -1/);
@@ -100,13 +126,17 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(layout, /\/og\.png/);
   assert.match(packageJson, /"name": "trade-journal-site"/);
   assert.match(schema, /exitTrades/);
+  assert.match(schema, /authSettings/);
+  assert.match(schema, /authAttempts/);
   assert.match(schema, /sqliteTable\("exit_trades"/);
   assert.match(route, /export async function GET/);
   assert.match(route, /export async function POST/);
   assert.match(route, /export async function PUT/);
   assert.match(route, /export async function DELETE/);
   assert.match(hosting, /"d1": "DB"/);
-  assert.match(migration, /CREATE TABLE `exit_trades`/);
+  assert.match(tradeMigration, /CREATE TABLE `exit_trades`/);
+  assert.match(authMigration, /CREATE TABLE `auth_settings`/);
+  assert.match(authMigration, /CREATE TABLE `auth_attempts`/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(journal + layout, /_sites-preview|Starter Project|codex-preview/);
 

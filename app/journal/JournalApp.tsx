@@ -18,6 +18,12 @@ type ExitTrade = {
 
 type DraftTrade = Omit<ExitTrade, "id" | "createdAt" | "updatedAt">;
 
+type PasswordDraft = {
+  confirmPassword: string;
+  currentPassword: string;
+  newPassword: string;
+};
+
 type StrategyResult = {
   firstTp: number;
   onePointFive: number;
@@ -115,6 +121,14 @@ function defaultDraft(month = initialMonth): DraftTrade {
     maxR: 1,
     actualR: 0,
     notes: "",
+  };
+}
+
+function emptyPasswordDraft(): PasswordDraft {
+  return {
+    confirmPassword: "",
+    currentPassword: "",
+    newPassword: "",
   };
 }
 
@@ -924,9 +938,13 @@ export default function Home() {
   const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isEntryOpen, setIsEntryOpen] = useState(false);
+  const [isSecurityOpen, setIsSecurityOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isPasswordSaving, setIsPasswordSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const [passwordDraft, setPasswordDraft] = useState<PasswordDraft>(() => emptyPasswordDraft());
+  const [securityNotice, setSecurityNotice] = useState("");
 
   const handleUnauthorized = useCallback((response: Response) => {
     if (response.status === 401) {
@@ -1317,6 +1335,60 @@ export default function Home() {
     setIsEntryOpen(false);
   }
 
+  function openSecurityDialog() {
+    setPasswordDraft(emptyPasswordDraft());
+    setSecurityNotice("");
+    setIsSecurityOpen(true);
+  }
+
+  function closeSecurityDialog() {
+    if (isPasswordSaving) {
+      return;
+    }
+
+    setPasswordDraft(emptyPasswordDraft());
+    setSecurityNotice("");
+    setIsSecurityOpen(false);
+  }
+
+  async function changePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSecurityNotice("");
+
+    if (passwordDraft.newPassword !== passwordDraft.confirmPassword) {
+      setSecurityNotice("New passwords do not match.");
+      return;
+    }
+
+    setIsPasswordSaving(true);
+    try {
+      const response = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: passwordDraft.currentPassword,
+          newPassword: passwordDraft.newPassword,
+        }),
+      });
+      if (handleUnauthorized(response)) {
+        return;
+      }
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to update password.");
+      }
+
+      setPasswordDraft(emptyPasswordDraft());
+      setSecurityNotice("");
+      setIsSecurityOpen(false);
+      setNotice("Password updated.");
+    } catch (error) {
+      setSecurityNotice(error instanceof Error ? error.message : "Unable to update password.");
+    } finally {
+      setIsPasswordSaving(false);
+    }
+  }
+
   async function saveTrade(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSaving(true);
@@ -1576,6 +1648,9 @@ export default function Home() {
           </label>
           <button className="primary-button compact" type="button" onClick={openNewTrade}>
             New Trade
+          </button>
+          <button className="utility-button" type="button" onClick={openSecurityDialog}>
+            Security
           </button>
           <button className="utility-button" type="button" onClick={() => void logout()}>
             Logout
@@ -1955,6 +2030,98 @@ export default function Home() {
               <strong>BE gate:</strong> No means every planned strategy is -1R. Yes means
               Max R decides which targets were reached; missed targets count 0R.
             </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isSecurityOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeSecurityDialog();
+            }
+          }}
+        >
+          <section
+            className="entry-panel entry-modal security-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="security-heading"
+          >
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Security</p>
+                <h2 id="security-heading">Change Password</h2>
+              </div>
+              <div className="panel-actions">
+                <button className="table-action" type="button" onClick={closeSecurityDialog}>
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <form className="trade-form" onSubmit={changePassword}>
+              <label>
+                Current Password
+                <input
+                  autoComplete="current-password"
+                  type="password"
+                  value={passwordDraft.currentPassword}
+                  onChange={(event) =>
+                    setPasswordDraft((current) => ({
+                      ...current,
+                      currentPassword: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <div className="field-row">
+                <label>
+                  New Password
+                  <input
+                    autoComplete="new-password"
+                    type="password"
+                    value={passwordDraft.newPassword}
+                    onChange={(event) =>
+                      setPasswordDraft((current) => ({
+                        ...current,
+                        newPassword: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Confirm Password
+                  <input
+                    autoComplete="new-password"
+                    type="password"
+                    value={passwordDraft.confirmPassword}
+                    onChange={(event) =>
+                      setPasswordDraft((current) => ({
+                        ...current,
+                        confirmPassword: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              <button className="primary-button" disabled={isPasswordSaving} type="submit">
+                {isPasswordSaving ? "Updating..." : "Update Password"}
+              </button>
+              <button
+                className="utility-button"
+                disabled={isPasswordSaving}
+                type="button"
+                onClick={closeSecurityDialog}
+              >
+                Cancel
+              </button>
+              {securityNotice ? <p className="notice">{securityNotice}</p> : null}
+            </form>
+
+            <div className="rule-note">Use 12+ characters with a mix of letters, numbers, and symbols.</div>
           </section>
         </div>
       ) : null}

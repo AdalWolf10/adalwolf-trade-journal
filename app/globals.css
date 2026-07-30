@@ -914,6 +914,10 @@ textarea:focus {
   overflow: auto;
 }
 
+.security-modal {
+  width: min(560px, 100%);
+}
+
 .entry-modal .panel-actions {
   align-items: center;
 }
