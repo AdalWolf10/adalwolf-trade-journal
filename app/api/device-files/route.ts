@@ -92,14 +92,11 @@ export async function POST(request: Request) {
     const folder = await ensureDeviceFolder();
     const upload = await parseDeviceFileUpload(request);
     const storedFile = await storeDeviceFile(upload, folder);
-    const files = await listDeviceFiles(folder.id);
 
     return Response.json(
       {
         file: deviceFileResponse(storedFile, folder, request),
-        files: files.map((item) => deviceFileResponse(item, folder, request)),
-        folder: deviceFolderResponse(folder, request),
-        safety: await getDeviceSafetyStatus(folder.id),
+        ...(await folderPayload(request)),
       },
       { status: 201 },
     );
@@ -144,16 +141,13 @@ export async function PATCH(request: Request) {
       return Response.json(await folderPayload(request));
     }
 
-    const folder =
-      payload.action === "rotate-short-code"
-        ? await rotateDeviceShortCode()
-        : await rotateDeviceFolderToken();
-    const files = await listDeviceFiles(folder.id);
-    return Response.json({
-      files: files.map((file) => deviceFileResponse(file, folder, request)),
-      folder: deviceFolderResponse(folder, request),
-      safety: await getDeviceSafetyStatus(folder.id),
-    });
+    if (payload.action === "rotate-short-code") {
+      await rotateDeviceShortCode();
+    } else {
+      await rotateDeviceFolderToken();
+    }
+
+    return Response.json(await folderPayload(request));
   } catch (error) {
     return Response.json({ error: deviceFilesRouteError(error) }, { status: 500 });
   }

@@ -5,13 +5,14 @@
 import {
   ChangeEvent,
   FormEvent,
-  KeyboardEvent,
+  KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useJournalTheme } from "./useJournalTheme";
 
 type BeHit = "Yes" | "No";
 
@@ -1588,6 +1589,7 @@ export default function Home() {
   const [dailyDraft, setDailyDraft] = useState<DraftDailyJournal>(() => defaultDailyJournal());
   const [selectedMonth, setSelectedMonth] = useState(initialMonth);
   const [selectedDay, setSelectedDay] = useState(currentDateKey());
+  const { theme, toggleTheme } = useJournalTheme();
   const [reportMode, setReportMode] = useState<ReportMode>("month");
   const [customStartMonth, setCustomStartMonth] = useState(initialMonth);
   const [customEndMonth, setCustomEndMonth] = useState(initialMonth);
@@ -1609,6 +1611,8 @@ export default function Home() {
   const [isDailyJournalLoading, setIsDailyJournalLoading] = useState(true);
   const [isDailyJournalSaving, setIsDailyJournalSaving] = useState(false);
   const [isDailyJournalAttachmentUploading, setIsDailyJournalAttachmentUploading] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const [isPasswordSaving, setIsPasswordSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [logSearch, setLogSearch] = useState("");
@@ -1715,7 +1719,7 @@ export default function Home() {
       }
     }
 
-    function closeOnEscape(event: KeyboardEvent) {
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape") {
         setIsDataMenuOpen(false);
       }
@@ -1859,7 +1863,14 @@ export default function Home() {
 
     keys.add(currentMonthKey());
 
-    return [...keys].sort().map((key) => ({
+    const sortedKeys = [...keys].sort();
+    const selectedIndex = sortedKeys.indexOf(selectedMonth);
+    const orderedKeys =
+      selectedIndex >= 0
+        ? [...sortedKeys.slice(selectedIndex), ...sortedKeys.slice(0, selectedIndex)]
+        : sortedKeys;
+
+    return orderedKeys.map((key) => ({
       count: tradeCounts.get(key) ?? 0,
       key,
       label: monthTabLabel(key),
@@ -2241,7 +2252,7 @@ export default function Home() {
     setSelectedTradeDetailId(null);
   }
 
-  function openTradeDetailFromKeyboard(event: KeyboardEvent<HTMLElement>, id: string) {
+  function openTradeDetailFromKeyboard(event: ReactKeyboardEvent<HTMLElement>, id: string) {
     if (event.key !== "Enter" && event.key !== " ") {
       return;
     }
@@ -3330,14 +3341,114 @@ export default function Home() {
   );
 
   return (
-    <main className="journal-shell">
-      <header className="topbar" aria-label="Exit strategy journal header">
-        <div>
-          <p className="eyebrow">Dashboard</p>
-          <h1>Exit Strategy Journal</h1>
+    <main className={`journal-shell ${isNavCollapsed ? "nav-collapsed" : ""}`} data-theme={theme}>
+      <button
+        className={`mobile-nav-scrim ${isMobileNavOpen ? "show" : ""}`}
+        type="button"
+        aria-label="Close navigation"
+        onClick={() => setIsMobileNavOpen(false)}
+      />
+
+      <aside className={`app-sidebar ${isMobileNavOpen ? "mobile-open" : ""}`} aria-label="Journal navigation">
+        <div className="sidebar-brand">
+          <span className="brand-mark" aria-hidden="true">
+            AW
+          </span>
+          <div className="sidebar-brand-copy">
+            <strong>Adalwolf</strong>
+            <small>Exit Strategy Journal</small>
+          </div>
         </div>
-        <div className="topbar-actions">
-          <button className="primary-button compact" type="button" onClick={openNewTrade}>
+
+        <button
+          className="sidebar-new-trade"
+          type="button"
+          onClick={() => {
+            openNewTrade();
+            setIsMobileNavOpen(false);
+          }}
+        >
+          <span aria-hidden="true">+</span>
+          <strong>New Trade</strong>
+        </button>
+
+        <nav className="sidebar-nav" aria-label="Primary sections">
+          <a className="active" href="#dashboard-overview" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">D</span>
+            <strong>Dashboard</strong>
+          </a>
+          <a href="#calendar" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">C</span>
+            <strong>Calendar</strong>
+          </a>
+          <a href="#trades" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">T</span>
+            <strong>Trade Log</strong>
+          </a>
+          <a href="#analytics" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">A</span>
+            <strong>Analytics</strong>
+          </a>
+          <a href="/journal/device-files" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">F</span>
+            <strong>Device Files</strong>
+          </a>
+        </nav>
+
+        <div className="sidebar-footer">
+          <button
+            className="sidebar-nav-button"
+            type="button"
+            onClick={() => {
+              openSecurityDialog();
+              setIsMobileNavOpen(false);
+            }}
+          >
+            <span aria-hidden="true">S</span>
+            <strong>Security</strong>
+          </button>
+          <button className="sidebar-nav-button" type="button" onClick={() => void logout()}>
+            <span aria-hidden="true">L</span>
+            <strong>Logout</strong>
+          </button>
+          <button
+            className="sidebar-collapse-button"
+            type="button"
+            aria-label={isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setIsNavCollapsed((current) => !current)}
+          >
+            {isNavCollapsed ? ">" : "<"}
+          </button>
+        </div>
+      </aside>
+
+      <div className="journal-workspace">
+        <header className="topbar" aria-label="Trading journal header">
+          <div className="topbar-title-group">
+            <button
+              className="mobile-menu-button"
+              type="button"
+              aria-label="Open navigation"
+              onClick={() => setIsMobileNavOpen(true)}
+            >
+              Menu
+            </button>
+            <div>
+              <p className="eyebrow">R Journal</p>
+              <h1>Trading Dashboard</h1>
+              <p className="dashboard-motto">{'"PATIENCE | DISCIPLINE | EXECUTION"'}</p>
+            </div>
+          </div>
+          <div className="topbar-actions">
+            <button
+              className="utility-button compact"
+              type="button"
+              aria-label="Toggle color theme"
+              onClick={toggleTheme}
+            >
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
+            <button className="primary-button compact" type="button" onClick={openNewTrade}>
             New Trade
           </button>
           <div className="data-menu" ref={dataMenuRef}>
@@ -3470,14 +3581,8 @@ export default function Home() {
               </div>
             ) : null}
           </div>
-          <button className="utility-button" type="button" onClick={openSecurityDialog}>
-            Security
-          </button>
-          <button className="utility-button" type="button" onClick={() => void logout()}>
-            Logout
-          </button>
-        </div>
-      </header>
+          </div>
+        </header>
 
       <section className="month-switcher" aria-label="Month navigation">
         <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
@@ -3505,7 +3610,7 @@ export default function Home() {
         </button>
       </section>
 
-      <section className="report-range-panel" aria-label="Report range">
+      <section className="report-range-panel" id="dashboard-overview" aria-label="Report range">
         <div className="report-range-title">
           <p className="eyebrow">Report Range</p>
           <h2>{reportRange.label}</h2>
@@ -3604,7 +3709,7 @@ export default function Home() {
 
       <section className="dashboard-grid" aria-label="Monthly dashboard">
         <section className="dashboard-main-column">
-          <article className="review-panel calendar-panel calendar-dominant">
+          <article className="review-panel calendar-panel calendar-dominant" id="calendar">
             <div className="panel-heading compact">
               <div>
                 <p className="eyebrow">Calendar</p>
@@ -3631,7 +3736,9 @@ export default function Home() {
                 ))}
                 {calendarCells.map((cell, index) => (
                   <button
-                    className={`calendar-cell ${cell.day ? toneClass(cell.total) : "blank"} ${cell.hasJournal ? "has-journal" : ""}`}
+                    className={`calendar-cell ${
+                      cell.day ? (cell.count ? toneClass(cell.total) : "no-trade") : "blank"
+                    } ${cell.hasJournal ? "has-journal" : ""}`}
                     disabled={!cell.day}
                     key={`${cell.date}-${index}`}
                     title={cell.hasJournal ? "Daily journal saved" : undefined}
@@ -3663,7 +3770,7 @@ export default function Home() {
           </article>
 
           <section className="operations-grid" aria-label="Trade operations">
-            <section className="log-panel" aria-labelledby="log-heading">
+            <section className="log-panel" id="trades" aria-labelledby="log-heading">
               <div className="panel-heading">
                 <div>
                   <p className="eyebrow">Trade Log</p>
@@ -3789,7 +3896,7 @@ export default function Home() {
           </section>
         </section>
 
-        <aside className="analytics-rail">
+        <aside className="analytics-rail" id="analytics">
           <article className="review-panel score-panel">
             <div className="panel-heading compact">
               <div>
@@ -4528,6 +4635,7 @@ export default function Home() {
           </section>
         </div>
       ) : null}
+      </div>
     </main>
   );
 }

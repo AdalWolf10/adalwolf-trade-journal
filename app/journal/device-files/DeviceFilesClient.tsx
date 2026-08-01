@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useJournalTheme } from "../useJournalTheme";
 
 type DeviceFolder = {
   id: string;
@@ -78,6 +79,7 @@ export default function DeviceFilesClient() {
   const [deviceFiles, setDeviceFiles] = useState<DeviceFile[]>([]);
   const [deviceFolder, setDeviceFolder] = useState<DeviceFolder | null>(null);
   const [deviceSafety, setDeviceSafety] = useState<DeviceSafety | null>(null);
+  const { theme, toggleTheme } = useJournalTheme();
   const [isDragActive, setIsDragActive] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -304,13 +306,21 @@ export default function DeviceFilesClient() {
     : "Loading storage";
 
   return (
-    <main className="device-page-shell">
+    <main className="device-page-shell" data-theme={theme}>
       <header className="device-page-header">
         <div>
           <p className="eyebrow">Data</p>
           <h1>Device Files</h1>
         </div>
         <div className="device-page-header-actions">
+          <button
+            className="utility-button"
+            type="button"
+            aria-label="Toggle color theme"
+            onClick={toggleTheme}
+          >
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
           <a className="utility-button" href="/journal">
             Journal
           </a>
