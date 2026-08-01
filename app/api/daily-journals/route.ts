@@ -1,36 +1,33 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { exitTrades } from "@/db/schema";
+import { dailyJournals } from "@/db/schema";
 import { requireAuthenticatedRequest } from "@/lib/auth";
 
-type TradePayload = {
-  actualR?: unknown;
+type JournalPayload = {
   attachments?: unknown;
-  id?: unknown;
+  breakevenTrades?: unknown;
   date?: unknown;
-  beHit?: unknown;
-  direction?: unknown;
-  exitType?: unknown;
-  firstTpR?: unknown;
-  instrument?: unknown;
-  lessonLearned?: unknown;
-  maxR?: unknown;
-  mistakeCategory?: unknown;
-  mistakeNotes?: unknown;
-  notes?: unknown;
-  session?: unknown;
-  setupName?: unknown;
+  htfBias?: unknown;
+  id?: unknown;
+  narrative?: unknown;
+  orm?: unknown;
+  priceActionRating?: unknown;
+  reviewNotes?: unknown;
   tags?: unknown;
 };
 
-type TradeAttachment = {
+type JournalAttachment = {
   contentType: string;
   filename: string;
   id: string;
   size: number;
-  url: string;
   uploadedAt: number;
+  url: string;
 };
+
+const allowedPriceActionRatings = new Set(
+  Array.from({ length: 21 }, (_, index) => index * 0.5).filter((rating) => rating !== 7),
+);
 
 function makeId() {
   return crypto.randomUUID();
@@ -59,7 +56,7 @@ function cleanTags(value: unknown) {
     .slice(0, 600);
 }
 
-function parseAttachments(value: unknown): TradeAttachment[] {
+function parseAttachments(value: unknown): JournalAttachment[] {
   const rawAttachments = Array.isArray(value)
     ? value
     : typeof value === "string" && value.trim()
@@ -71,12 +68,12 @@ function parseAttachments(value: unknown): TradeAttachment[] {
   }
 
   return rawAttachments
-    .map((attachment): TradeAttachment | null => {
+    .map((attachment): JournalAttachment | null => {
       if (!attachment || typeof attachment !== "object") {
         return null;
       }
 
-      const item = attachment as Partial<TradeAttachment> & {
+      const item = attachment as Partial<JournalAttachment> & {
         sharedUrl?: unknown;
         shortUrl?: unknown;
       };
@@ -98,8 +95,7 @@ function parseAttachments(value: unknown): TradeAttachment[] {
         url,
       };
     })
-    .filter((attachment): attachment is TradeAttachment => Boolean(attachment))
-    .slice(0, 20);
+    .filter((attachment): attachment is JournalAttachment => Boolean(attachment));
 }
 
 function tryParseJson(value: string) {
@@ -125,23 +121,19 @@ function parseAttachmentText(value: string) {
     });
 }
 
-function tradeResponse(trade: typeof exitTrades.$inferSelect) {
+function journalResponse(journal: typeof dailyJournals.$inferSelect) {
   return {
-    ...trade,
-    attachments: parseAttachments(trade.attachments),
+    ...journal,
+    attachments: parseAttachments(journal.attachments),
   };
 }
 
-function parsePayload(payload: TradePayload) {
+function parsePayload(payload: JournalPayload) {
   const id = typeof payload.id === "string" ? payload.id.trim() : "";
   const date = typeof payload.date === "string" ? payload.date : "";
-  const beHit = payload.beHit === "No" ? "No" : payload.beHit === "Yes" ? "Yes" : "";
-  const firstTpR = toNumber(payload.firstTpR);
-  const rawMaxR = toNumber(payload.maxR);
-  const maxR = beHit === "No" && rawMaxR === null ? 0 : rawMaxR;
-  const actualR = beHit === "No" ? -1 : toNumber(payload.actualR);
+  const priceActionRating = toNumber(payload.priceActionRating);
+  const breakevenTrades = toNumber(payload.breakevenTrades);
   const attachments = parseAttachments(payload.attachments);
-  const notes = cleanText(payload.notes, 12000);
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { error: "date is required" };
@@ -151,40 +143,25 @@ function parsePayload(payload: TradePayload) {
     return { error: "id format is not valid" };
   }
 
-  if (!beHit) {
-    return { error: "BE Hit must be Yes or No" };
+  if (priceActionRating === null || !allowedPriceActionRatings.has(priceActionRating)) {
+    return { error: "Price Action Rating must be 0 to 10 in 0.5 steps, excluding 7." };
   }
 
-  if (firstTpR === null || firstTpR <= 0) {
-    return { error: "First TP R must be greater than 0" };
-  }
-
-  if (maxR === null || maxR < 0) {
-    return { error: "Max R must be 0 or greater" };
-  }
-
-  if (actualR === null) {
-    return { error: "Actual R is required" };
+  if (breakevenTrades === null || breakevenTrades < 0) {
+    return { error: "Breakeven trades must be 0 or greater" };
   }
 
   return {
     id: id || undefined,
-    trade: {
-      actualR,
+    journal: {
       attachments: JSON.stringify(attachments),
-      beHit,
+      breakevenTrades: Math.floor(breakevenTrades),
       date,
-      direction: cleanText(payload.direction, 40),
-      exitType: cleanText(payload.exitType, 80),
-      firstTpR,
-      instrument: cleanText(payload.instrument, 24).toUpperCase(),
-      lessonLearned: cleanText(payload.lessonLearned, 4000),
-      maxR,
-      mistakeCategory: cleanText(payload.mistakeCategory, 100),
-      mistakeNotes: cleanText(payload.mistakeNotes, 4000),
-      notes,
-      session: cleanText(payload.session, 80),
-      setupName: cleanText(payload.setupName, 120),
+      htfBias: cleanText(payload.htfBias, 500),
+      narrative: cleanText(payload.narrative, 12000),
+      orm: cleanText(payload.orm, 1000),
+      priceActionRating,
+      reviewNotes: cleanText(payload.reviewNotes, 12000),
       tags: cleanTags(payload.tags),
     },
   };
@@ -196,8 +173,12 @@ function toRouteErrorMessage(error: unknown) {
     error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
   const combined = `${message}\n${detail}`;
 
-  if (combined.includes("no such table") || combined.includes("exit_trades")) {
-    return "The trade journal database is not ready yet. Deploy the generated migration with the site.";
+  if (combined.includes("no such table") || combined.includes("daily_journals")) {
+    return "The daily journal database is not ready yet. Deploy the generated migration with the site.";
+  }
+
+  if (combined.includes("UNIQUE constraint failed")) {
+    return "Daily journal already exists for this date.";
   }
 
   return message;
@@ -210,14 +191,26 @@ export async function GET(request: Request) {
   }
 
   try {
+    const url = new URL(request.url);
+    const date = url.searchParams.get("date");
     const db = getDb();
-    const trades = await db
+
+    if (date) {
+      const [journal] = await db
+        .select()
+        .from(dailyJournals)
+        .where(eq(dailyJournals.date, date))
+        .limit(1);
+      return Response.json({ journal: journal ? journalResponse(journal) : null });
+    }
+
+    const journals = await db
       .select()
-      .from(exitTrades)
-      .orderBy(desc(exitTrades.date), desc(exitTrades.createdAt))
+      .from(dailyJournals)
+      .orderBy(desc(dailyJournals.date), desc(dailyJournals.updatedAt))
       .limit(1500);
 
-    return Response.json({ trades: trades.map(tradeResponse) });
+    return Response.json({ journals: journals.map(journalResponse) });
   } catch (error) {
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
@@ -230,38 +223,24 @@ export async function POST(request: Request) {
   }
 
   try {
-    const parsed = parsePayload((await request.json()) as TradePayload);
+    const parsed = parsePayload((await request.json()) as JournalPayload);
     if ("error" in parsed) {
       return Response.json({ error: parsed.error }, { status: 400 });
     }
 
     const now = Date.now();
     const db = getDb();
-    const id = parsed.id ?? makeId();
-
-    if (parsed.id) {
-      const [existingTrade] = await db
-        .select({ id: exitTrades.id })
-        .from(exitTrades)
-        .where(eq(exitTrades.id, parsed.id))
-        .limit(1);
-
-      if (existingTrade) {
-        return Response.json({ error: "trade already exists" }, { status: 409 });
-      }
-    }
-
-    const [trade] = await db
-      .insert(exitTrades)
+    const [journal] = await db
+      .insert(dailyJournals)
       .values({
-        id,
-        ...parsed.trade,
+        id: parsed.id ?? makeId(),
+        ...parsed.journal,
         createdAt: now,
         updatedAt: now,
       })
       .returning();
 
-    return Response.json({ trade: tradeResponse(trade) }, { status: 201 });
+    return Response.json({ journal: journalResponse(journal) }, { status: 201 });
   } catch (error) {
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
@@ -280,23 +259,23 @@ export async function PUT(request: Request) {
       return Response.json({ error: "id is required" }, { status: 400 });
     }
 
-    const parsed = parsePayload((await request.json()) as TradePayload);
+    const parsed = parsePayload((await request.json()) as JournalPayload);
     if ("error" in parsed) {
       return Response.json({ error: parsed.error }, { status: 400 });
     }
 
     const db = getDb();
-    const [trade] = await db
-      .update(exitTrades)
-      .set({ ...parsed.trade, updatedAt: Date.now() })
-      .where(eq(exitTrades.id, id))
+    const [journal] = await db
+      .update(dailyJournals)
+      .set({ ...parsed.journal, updatedAt: Date.now() })
+      .where(eq(dailyJournals.id, id))
       .returning();
 
-    if (!trade) {
-      return Response.json({ error: "trade not found" }, { status: 404 });
+    if (!journal) {
+      return Response.json({ error: "daily journal not found" }, { status: 404 });
     }
 
-    return Response.json({ trade: tradeResponse(trade) });
+    return Response.json({ journal: journalResponse(journal) });
   } catch (error) {
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
@@ -315,8 +294,7 @@ export async function DELETE(request: Request) {
       return Response.json({ error: "id is required" }, { status: 400 });
     }
 
-    const db = getDb();
-    await db.delete(exitTrades).where(eq(exitTrades.id, id));
+    await getDb().delete(dailyJournals).where(eq(dailyJournals.id, id));
 
     return Response.json({ ok: true });
   } catch (error) {

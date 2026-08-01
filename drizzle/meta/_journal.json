@@ -15,6 +15,41 @@
       "when": 1785381428835,
       "tag": "0001_swift_kate_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785438374022,
+      "tag": "0002_overjoyed_peter_parker",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785440077785,
+      "tag": "0003_fantastic_green_goblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785441670661,
+      "tag": "0004_wandering_maria_hill",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1785558063069,
+      "tag": "0005_wide_human_cannonball",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1785561280306,
+      "tag": "0006_ordinary_mister_sinister",
+      "breakpoints": true
     }
   ]
 }

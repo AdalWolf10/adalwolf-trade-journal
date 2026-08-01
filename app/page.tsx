@@ -47,6 +47,7 @@ export default function Home() {
             Username
             <input
               autoComplete="username"
+              suppressHydrationWarning
               value={username}
               onChange={(event) => setUsername(event.target.value)}
             />
@@ -55,6 +56,7 @@ export default function Home() {
             Password
             <input
               autoComplete="current-password"
+              suppressHydrationWarning
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}

@@ -19,6 +19,7 @@
     "enabled": true
   },
   "vars": {
+    "DEVICE_FILES_STORAGE_LIMIT_BYTES": "10522669875",
     "JOURNAL_USERNAME": "Adalwolf"
   },
   "d1_databases": [
@@ -27,6 +28,12 @@
       "database_name": "adalwolf-trade-journal-db",
       "database_id": "9a968ebc-9df9-4f6c-a28e-0cb7051f95d4",
       "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "DEVICE_FILES",
+      "bucket_name": "adalwolf-device-files"
     }
   ]
 }
