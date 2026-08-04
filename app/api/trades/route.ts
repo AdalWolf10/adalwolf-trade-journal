@@ -32,6 +32,8 @@ type TradeAttachment = {
   uploadedAt: number;
 };
 
+type BeHit = "Yes" | "No";
+
 function makeId() {
   return crypto.randomUUID();
 }
@@ -135,7 +137,7 @@ function tradeResponse(trade: typeof exitTrades.$inferSelect) {
 function parsePayload(payload: TradePayload) {
   const id = typeof payload.id === "string" ? payload.id.trim() : "";
   const date = typeof payload.date === "string" ? payload.date : "";
-  const beHit = payload.beHit === "No" ? "No" : payload.beHit === "Yes" ? "Yes" : "";
+  const beHit: BeHit | "" = payload.beHit === "No" ? "No" : payload.beHit === "Yes" ? "Yes" : "";
   const firstTpR = toNumber(payload.firstTpR);
   const rawMaxR = toNumber(payload.maxR);
   const maxR = beHit === "No" && rawMaxR === null ? 0 : rawMaxR;

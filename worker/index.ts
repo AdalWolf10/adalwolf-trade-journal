@@ -272,7 +272,8 @@ async function serveDeviceFile(request: Request, env: Env) {
     }
 
     if (file.object_key) {
-      return serveDeviceObject(request, env, file);
+      const objectResponse = await serveDeviceObject(request, env, file);
+      return objectResponse ?? new Response("Not found", { status: 404 });
     }
 
     const headers = legacyDeviceFileHeaders(file);

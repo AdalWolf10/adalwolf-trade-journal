@@ -324,12 +324,18 @@ async function derivePasswordBytes(password: string, salt: Uint8Array, iteration
       hash: "SHA-256",
       iterations,
       name: "PBKDF2",
-      salt,
+      salt: bytesToArrayBuffer(salt),
     },
     key,
     PASSWORD_HASH_BITS,
   );
   return new Uint8Array(bits);
+}
+
+function bytesToArrayBuffer(bytes: Uint8Array) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
 }
 
 async function readAuthAttempt(identifier: string): Promise<{

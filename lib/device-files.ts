@@ -177,7 +177,7 @@ export async function ensureDeviceFolder(): Promise<ReadyDeviceFolder> {
     .where(eq(deviceFolders.id, DEFAULT_DEVICE_FOLDER_ID))
     .limit(1);
 
-  if (existingFolder?.shortCode) {
+  if (isReadyDeviceFolder(existingFolder)) {
     return existingFolder;
   }
 
@@ -186,7 +186,7 @@ export async function ensureDeviceFolder(): Promise<ReadyDeviceFolder> {
   }
 
   const now = Date.now();
-  const folder = {
+  const folder: ReadyDeviceFolder = {
     createdAt: now,
     id: DEFAULT_DEVICE_FOLDER_ID,
     name: DEFAULT_DEVICE_FOLDER_NAME,
@@ -204,7 +204,7 @@ export async function ensureDeviceFolder(): Promise<ReadyDeviceFolder> {
     .where(eq(deviceFolders.id, DEFAULT_DEVICE_FOLDER_ID))
     .limit(1);
 
-  return savedFolder?.shortCode ? savedFolder : folder;
+  return isReadyDeviceFolder(savedFolder) ? savedFolder : folder;
 }
 
 export async function listDeviceFiles(folderId = DEFAULT_DEVICE_FOLDER_ID) {
@@ -525,11 +525,15 @@ async function updateDeviceFolderShortCode(folder: DeviceFolder): Promise<ReadyD
     .where(eq(deviceFolders.id, folder.id))
     .returning();
 
-  if (!updatedFolder?.shortCode) {
+  if (!isReadyDeviceFolder(updatedFolder)) {
     throw new Error("Unable to save the TV code.");
   }
 
   return updatedFolder;
+}
+
+function isReadyDeviceFolder(folder: DeviceFolder | null | undefined): folder is ReadyDeviceFolder {
+  return typeof folder?.shortCode === "string" && folder.shortCode.length > 0;
 }
 
 function base64UrlEncode(bytes: Uint8Array) {

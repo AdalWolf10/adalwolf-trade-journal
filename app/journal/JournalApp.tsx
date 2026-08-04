@@ -70,11 +70,53 @@ type ImportTrade = DraftTrade & {
   id?: string;
 };
 
+type ImportDailyJournal = DailyJournal;
+
+type RestorableAttachment = TradeAttachment & {
+  backupPath?: string;
+};
+
+type RestorableTrade = Omit<ImportTrade, "attachments"> & {
+  attachments: RestorableAttachment[];
+};
+
+type RestorableDailyJournal = Omit<ImportDailyJournal, "attachments"> & {
+  attachments: RestorableAttachment[];
+};
+
+type RestoreMode = "merge" | "replace";
+
+type RestoredJournalData = {
+  attachmentCount: number;
+  dailyJournals: ImportDailyJournal[];
+  missingAttachmentCount: number;
+  trades: ImportTrade[];
+};
+
+type PendingRestore = {
+  availableMonths: string[];
+  availableYears: string[];
+  dailyJournals: RestorableDailyJournal[];
+  fileName: string;
+  mode: RestoreMode;
+  trades: RestorableTrade[];
+  zipFiles: Record<string, Uint8Array>;
+};
+
 type PendingImport = {
+  dailyJournals: ImportDailyJournal[];
   duplicateMatches: ImportTrade[];
   readyTrades: ImportTrade[];
   skippedById: number;
   sourceName: string;
+};
+
+type ImportBatchOptions = {
+  dailyJournalExistingDates?: Set<string>;
+  extraSkippedDailyJournals?: number;
+  missingAttachments?: number;
+  noticePrefix?: string;
+  restoredAttachments?: number;
 };
 
 type PasswordDraft = {
@@ -163,6 +205,27 @@ type TradeSort = {
   key: TradeSortKey;
 };
 
+type ResultFilter = "all" | "win" | "loss" | "flat";
+type DailyRatingFilter = "all" | "low" | "mid" | "high";
+type BreakevenFilter = "all" | "none" | "one-plus" | "two-plus";
+
+type JournalFilters = {
+  beHit: "all" | BeHit;
+  breakeven: BreakevenFilter;
+  paRating: DailyRatingFilter;
+  result: ResultFilter;
+  session: string;
+  setup: string;
+  tag: string;
+};
+
+type AttachmentPreviewState = {
+  attachments: TradeAttachment[];
+  index: number;
+  sourceDate?: string;
+  sourceLabel: string;
+};
+
 type TradeTextField = "notes";
 type DailyTextField = "htfBias" | "orm" | "narrative" | "reviewNotes";
 
@@ -181,6 +244,27 @@ type TextEditorTarget =
     };
 
 type ReportMode = "month" | "year" | "all" | "custom";
+type ActiveReportRange = {
+  from?: string;
+  label: string;
+  mode: ReportMode;
+  to?: string;
+  year?: string;
+};
+type SheetCell = boolean | null | number | string | undefined;
+type WorkbookSheet = {
+  name: string;
+  rows: SheetCell[][];
+};
+type ZipFileBody = ArrayBuffer | string | Uint8Array;
+type AttachmentSource = {
+  attachment: TradeAttachment;
+  backupPath?: string;
+  sourceId: string;
+  sourceLabel: string;
+  sourceType: "Daily Journal" | "Trade";
+  date: string;
+};
 
 const reportOptions: Array<{ label: string; mode: ReportMode }> = [
   { label: "Selected Month", mode: "month" },
@@ -188,6 +272,42 @@ const reportOptions: Array<{ label: string; mode: ReportMode }> = [
   { label: "All", mode: "all" },
   { label: "Custom", mode: "custom" },
 ];
+const restoreScopeOptions: Array<{ label: string; mode: ReportMode }> = [
+  { label: "All", mode: "all" },
+  { label: "Month", mode: "month" },
+  { label: "Year", mode: "year" },
+  { label: "Custom", mode: "custom" },
+];
+const defaultJournalFilters: JournalFilters = {
+  beHit: "all",
+  breakeven: "all",
+  paRating: "all",
+  result: "all",
+  session: "",
+  setup: "",
+  tag: "",
+};
+const resultFilterOptions: Array<{ label: string; value: ResultFilter }> = [
+  { label: "All results", value: "all" },
+  { label: "Wins", value: "win" },
+  { label: "Losses", value: "loss" },
+  { label: "Flat", value: "flat" },
+];
+const paRatingFilterOptions: Array<{ label: string; value: DailyRatingFilter }> = [
+  { label: "All PA ratings", value: "all" },
+  { label: "8-10", value: "high" },
+  { label: "5-6.5", value: "mid" },
+  { label: "0-4.5", value: "low" },
+];
+const breakevenFilterOptions: Array<{ label: string; value: BreakevenFilter }> = [
+  { label: "All BE days", value: "all" },
+  { label: "0 BE trades", value: "none" },
+  { label: "1+ BE trades", value: "one-plus" },
+  { label: "2+ BE trades", value: "two-plus" },
+];
+const backupReminderStorageKey = "adalwolf_last_backup_exported_at";
+const backupReminderDismissedStorageKey = "adalwolf_backup_reminder_dismissed_at";
+const backupReminderIntervalMs = 7 * 24 * 60 * 60 * 1000;
 
 const directionOptions = ["", "Long", "Short"] as const;
 const sessionOptions = ["", "Asia", "London", "NY AM", "NY PM"] as const;
@@ -346,6 +466,19 @@ function normalizeMonthRange(start: string, end: string) {
     : { from: safeEnd, to: safeStart };
 }
 
+function dateMatchesReportRange(date: string, range: ActiveReportRange, fallbackMonth: string) {
+  if (range.mode === "all") {
+    return true;
+  }
+
+  if (range.mode === "year") {
+    return date.startsWith(`${range.year}-`);
+  }
+
+  const key = monthKey(date);
+  return key >= (range.from ?? fallbackMonth) && key <= (range.to ?? fallbackMonth);
+}
+
 function daysInMonth(key: string) {
   const [year, month] = key.split("-").map(Number);
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -382,6 +515,32 @@ function fileSizeLabel(size: number) {
   }
 
   return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function formatTimestampCell(timestamp: number | undefined) {
+  if (!timestamp || !Number.isFinite(timestamp)) {
+    return "";
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function safeExportSegment(value: string, fallback: string) {
+  return (
+    value
+      .replace(/[^A-Za-z0-9._ -]+/g, "-")
+      .replace(/\s+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || fallback
+  );
+}
+
+function attachmentFileLabel(attachments: TradeAttachment[]) {
+  return attachments.map((attachment) => attachment.filename).join("; ");
+}
+
+function attachmentUrlLabel(attachments: TradeAttachment[]) {
+  return attachments.map((attachment) => attachment.url).join("; ");
 }
 
 function fileExtension(filename: string, contentType = "") {
@@ -706,44 +865,470 @@ function tagList(trade: Pick<ExitTrade, "tags">) {
     .filter(Boolean);
 }
 
-function normalizeAttachments(value: unknown): TradeAttachment[] {
+function tradeSheetRows(trades: ExitTrade[]): SheetCell[][] {
+  return [
+    [
+      "ID",
+      "Date",
+      "Day",
+      "Instrument",
+      "Direction",
+      "Session",
+      "Setup Name",
+      "BE Hit",
+      "First TP R",
+      "Max R",
+      "Actual R",
+      "Exit Type",
+      "Tags",
+      "Note",
+      "Issue Category",
+      "Issue Notes",
+      "Review Takeaway",
+      "First TP Result",
+      "1.5R Result",
+      "2R Result",
+      "3R Result",
+      "Attachment Count",
+      "Attachment Filenames",
+      "Attachment URLs",
+      "Created At",
+      "Updated At",
+    ],
+    ...trades.map((trade) => {
+      const result = strategyResult(trade);
+      return [
+        trade.id,
+        trade.date,
+        dayName(trade.date),
+        trade.instrument,
+        trade.direction,
+        trade.session,
+        trade.setupName,
+        trade.beHit,
+        trade.firstTpR,
+        trade.maxR,
+        trade.actualR,
+        trade.exitType,
+        trade.tags,
+        trade.notes,
+        trade.mistakeCategory,
+        trade.mistakeNotes,
+        trade.lessonLearned,
+        result.firstTp,
+        result.onePointFive,
+        result.twoR,
+        result.threeR,
+        trade.attachments.length,
+        attachmentFileLabel(trade.attachments),
+        attachmentUrlLabel(trade.attachments),
+        formatTimestampCell(trade.createdAt),
+        formatTimestampCell(trade.updatedAt),
+      ];
+    }),
+  ];
+}
+
+function dailyJournalSheetRows(journals: DailyJournal[]): SheetCell[][] {
+  return [
+    [
+      "ID",
+      "Date",
+      "Day",
+      "HTF Bias",
+      "ORM",
+      "Narrative",
+      "Price Action Rating",
+      "Breakeven Trades",
+      "Tags",
+      "Review Notes",
+      "Attachment Count",
+      "Attachment Filenames",
+      "Attachment URLs",
+      "Created At",
+      "Updated At",
+    ],
+    ...journals.map((journal) => [
+      journal.id,
+      journal.date,
+      dayName(journal.date),
+      journal.htfBias,
+      journal.orm,
+      journal.narrative,
+      journal.priceActionRating,
+      journal.breakevenTrades,
+      journal.tags,
+      journal.reviewNotes,
+      journal.attachments.length,
+      attachmentFileLabel(journal.attachments),
+      attachmentUrlLabel(journal.attachments),
+      formatTimestampCell(journal.createdAt),
+      formatTimestampCell(journal.updatedAt),
+    ]),
+  ];
+}
+
+function tradeStatsForExport(trades: ExitTrade[]) {
+  const winners = trades.filter((trade) => trade.actualR > 0);
+  const losers = trades.filter((trade) => trade.actualR < 0);
+  const grossWin = winners.reduce((sum, trade) => sum + trade.actualR, 0);
+  const grossLoss = Math.abs(losers.reduce((sum, trade) => sum + trade.actualR, 0));
+  const totalMax = trades.reduce((sum, trade) => sum + trade.maxR, 0);
+  const totalActual = trades.reduce((sum, trade) => sum + trade.actualR, 0);
+  const beHits = trades.filter((trade) => trade.beHit === "Yes").length;
+
+  return {
+    avgR: trades.length ? totalActual / trades.length : 0,
+    beRate: trades.length ? (beHits / trades.length) * 100 : 0,
+    captureRate: totalMax ? (totalActual / totalMax) * 100 : 0,
+    grossLoss,
+    grossWin,
+    losses: losers.length,
+    netR: totalActual,
+    profitFactor: grossLoss ? grossWin / grossLoss : grossWin ? Infinity : 0,
+    totalMax,
+    trades: trades.length,
+    winRate: trades.length ? (winners.length / trades.length) * 100 : 0,
+    wins: winners.length,
+  };
+}
+
+function summarySheetRows(trades: ExitTrade[], journals: DailyJournal[], range: ActiveReportRange): SheetCell[][] {
+  const summary = tradeStatsForExport(trades);
+  const attachments = collectAttachmentSources(trades, journals);
+  return [
+    ["Metric", "Value"],
+    ["Report Range", range.label],
+    ["Generated At", new Date().toISOString()],
+    ["Trades", summary.trades],
+    ["Daily Journals", journals.length],
+    ["Net R", summary.netR],
+    ["Win Rate", `${summary.winRate.toFixed(1)}%`],
+    ["Average R", summary.avgR],
+    ["Gross Win R", summary.grossWin],
+    ["Gross Loss R", summary.grossLoss],
+    ["Profit Factor", ratio(summary.profitFactor)],
+    ["Capture Rate", `${summary.captureRate.toFixed(1)}%`],
+    ["BE Hit Rate", `${summary.beRate.toFixed(1)}%`],
+    ["Attachment References", attachments.length],
+  ];
+}
+
+function strategySummary(trades: ExitTrade[]) {
+  return [
+    { key: "actual", label: "Actual", values: trades.map((trade) => trade.actualR) },
+    { key: "firstTp", label: "First TP", values: trades.map((trade) => strategyResult(trade).firstTp) },
+    { key: "onePointFive", label: "1.5R", values: trades.map((trade) => strategyResult(trade).onePointFive) },
+    { key: "twoR", label: "2R", values: trades.map((trade) => strategyResult(trade).twoR) },
+    { key: "threeR", label: "3R", values: trades.map((trade) => strategyResult(trade).threeR) },
+  ].map((strategy) => {
+    const total = strategy.values.reduce((sum, value) => sum + value, 0);
+    const wins = strategy.values.filter((value) => value > 0).length;
+    return {
+      ...strategy,
+      average: strategy.values.length ? total / strategy.values.length : 0,
+      total,
+      winRate: strategy.values.length ? (wins / strategy.values.length) * 100 : 0,
+      wins,
+    };
+  });
+}
+
+function exitComparisonSheetRows(trades: ExitTrade[]): SheetCell[][] {
+  const rows = strategySummary(trades);
+  const actualTotal = rows.find((row) => row.key === "actual")?.total ?? 0;
+  return [
+    ["Rank", "Strategy", "Total R", "Delta vs Actual", "Average R", "Win Rate", "Wins", "Trades"],
+    ...rows
+      .map((row) => ({
+        ...row,
+        delta: row.total - actualTotal,
+      }))
+      .sort((left, right) => right.total - left.total)
+      .map((row, index) => [
+        index + 1,
+        row.label,
+        row.total,
+        row.delta,
+        row.average,
+        `${row.winRate.toFixed(1)}%`,
+        row.wins,
+        trades.length,
+      ]),
+  ];
+}
+
+function groupedTradeSheetRows(
+  trades: ExitTrade[],
+  label: string,
+  groupValue: (trade: ExitTrade) => string,
+): SheetCell[][] {
+  const groups = new Map<string, ExitTrade[]>();
+  trades.forEach((trade) => {
+    const key = groupValue(trade).trim() || "Unspecified";
+    groups.set(key, [...(groups.get(key) ?? []), trade]);
+  });
+
+  return [
+    [label, "Trades", "Net R", "Win Rate", "Average R", "Gross Win R", "Gross Loss R", "Profit Factor", "BE Hit Rate"],
+    ...Array.from(groups.entries())
+      .map(([key, rows]) => {
+        const summary = tradeStatsForExport(rows);
+        return {
+          key,
+          row: [
+            key,
+            summary.trades,
+            summary.netR,
+            `${summary.winRate.toFixed(1)}%`,
+            summary.avgR,
+            summary.grossWin,
+            summary.grossLoss,
+            ratio(summary.profitFactor),
+            `${summary.beRate.toFixed(1)}%`,
+          ],
+          sortValue: summary.netR,
+        };
+      })
+      .sort((left, right) => right.sortValue - left.sortValue || String(left.key).localeCompare(String(right.key)))
+      .map((item) => item.row),
+  ];
+}
+
+function weekdaySheetRows(trades: ExitTrade[]): SheetCell[][] {
+  return [
+    ["Weekday", "Trades", "Net R", "Win Rate", "Average R", "BE Hit Rate"],
+    ...weekdayLabels.map((label, index) => {
+      const rows = trades.filter((trade) => weekdayIndex(trade.date) === index);
+      const summary = tradeStatsForExport(rows);
+      return [
+        label,
+        summary.trades,
+        summary.netR,
+        `${summary.winRate.toFixed(1)}%`,
+        summary.avgR,
+        `${summary.beRate.toFixed(1)}%`,
+      ];
+    }),
+  ];
+}
+
+function tagSheetRows(trades: ExitTrade[], journals: DailyJournal[]): SheetCell[][] {
+  const tags = new Map<string, { journals: number; trades: ExitTrade[] }>();
+  trades.forEach((trade) => {
+    tagList(trade).forEach((tag) => {
+      const current = tags.get(tag) ?? { journals: 0, trades: [] };
+      current.trades.push(trade);
+      tags.set(tag, current);
+    });
+  });
+  journals.forEach((journal) => {
+    tagList(journal).forEach((tag) => {
+      const current = tags.get(tag) ?? { journals: 0, trades: [] };
+      current.journals += 1;
+      tags.set(tag, current);
+    });
+  });
+
+  return [
+    ["Tag", "Trade Count", "Daily Journal Count", "Net R", "Trade Win Rate"],
+    ...Array.from(tags.entries())
+      .map(([tag, value]) => {
+        const summary = tradeStatsForExport(value.trades);
+        return {
+          row: [tag, value.trades.length, value.journals, summary.netR, `${summary.winRate.toFixed(1)}%`],
+          sortValue: value.trades.length + value.journals,
+          tag,
+        };
+      })
+      .sort((left, right) => right.sortValue - left.sortValue || left.tag.localeCompare(right.tag))
+      .map((item) => item.row),
+  ];
+}
+
+function collectAttachmentSources(trades: ExitTrade[], journals: DailyJournal[]) {
+  const tradeSources = trades.flatMap((trade, tradeIndex) =>
+    trade.attachments.map((attachment, attachmentIndex) => ({
+      attachment,
+      date: trade.date,
+      sourceId: trade.id,
+      sourceLabel: `Trade #${tradeIndex + 1}${trade.session ? ` ${trade.session}` : ""}${
+        trade.setupName ? ` ${trade.setupName}` : ""
+      }`,
+      sourceType: "Trade" as const,
+      sortIndex: attachmentIndex,
+    })),
+  );
+  const journalSources = journals.flatMap((journal) =>
+    journal.attachments.map((attachment, attachmentIndex) => ({
+      attachment,
+      date: journal.date,
+      sourceId: journal.id,
+      sourceLabel: "Daily Journal",
+      sourceType: "Daily Journal" as const,
+      sortIndex: attachmentIndex,
+    })),
+  );
+
+  return [...tradeSources, ...journalSources].sort(
+    (left, right) =>
+      left.date.localeCompare(right.date) ||
+      left.sourceType.localeCompare(right.sourceType) ||
+      left.sortIndex - right.sortIndex,
+  );
+}
+
+function attachmentIndexSheetRows(sources: AttachmentSource[]): SheetCell[][] {
+  return [
+    [
+      "Source Type",
+      "Source ID",
+      "Date",
+      "Source Label",
+      "Attachment ID",
+      "Filename",
+      "Content Type",
+      "Size Bytes",
+      "Uploaded At",
+      "URL",
+      "Backup Path",
+    ],
+    ...sources.map((source) => [
+      source.sourceType,
+      source.sourceId,
+      source.date,
+      source.sourceLabel,
+      source.attachment.id,
+      source.attachment.filename,
+      source.attachment.contentType,
+      source.attachment.size,
+      formatTimestampCell(source.attachment.uploadedAt),
+      source.attachment.url,
+      source.backupPath ?? "",
+    ]),
+  ];
+}
+
+function monthlySummarySheetRows(trades: ExitTrade[]): SheetCell[][] {
+  const months = new Map<string, ExitTrade[]>();
+  trades.forEach((trade) => {
+    const key = monthKey(trade.date);
+    months.set(key, [...(months.get(key) ?? []), trade]);
+  });
+
+  return [
+    ["Month", "Trades", "Net R", "Win Rate", "Average R", "Gross Win R", "Gross Loss R", "Profit Factor"],
+    ...Array.from(months.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, rows]) => {
+        const summary = tradeStatsForExport(rows);
+        return [
+          monthLabel(key),
+          summary.trades,
+          summary.netR,
+          `${summary.winRate.toFixed(1)}%`,
+          summary.avgR,
+          summary.grossWin,
+          summary.grossLoss,
+          ratio(summary.profitFactor),
+        ];
+      }),
+  ];
+}
+
+function readmeSheetRows(): SheetCell[][] {
+  return [
+    ["Sheet", "Purpose"],
+    ["Trades", "One row per trade with every stored trade field plus calculated exit results."],
+    ["Daily Journals", "One row per journal date with HTF bias, ORM, narrative, ratings, tags, and attachments."],
+    ["Summary", "High-level metrics for the selected export range."],
+    ["Monthly Summary", "Calculated performance grouped by month."],
+    ["By Setup", "Calculated performance grouped by setup name."],
+    ["By Session", "Calculated performance grouped by trading session."],
+    ["By Weekday", "Calculated performance grouped by weekday."],
+    ["Exit Ranking", "Ranks actual exits against alternate exit methods."],
+    ["Tags", "Tag frequency and R performance."],
+    ["Attachments Index", "Screenshot/file references. Images are referenced, not embedded in the workbook."],
+  ];
+}
+
+function completeWorkbookSheets(
+  trades: ExitTrade[],
+  journals: DailyJournal[],
+  range: ActiveReportRange,
+  attachmentSources = collectAttachmentSources(trades, journals),
+): WorkbookSheet[] {
+  const sortedTrades = [...trades].sort((left, right) => left.date.localeCompare(right.date) || compareTradeEntryOrder(left, right));
+  const sortedJournals = [...journals].sort((left, right) => left.date.localeCompare(right.date));
+  return [
+    { name: "README", rows: readmeSheetRows() },
+    { name: "Trades", rows: tradeSheetRows(sortedTrades) },
+    { name: "Daily Journals", rows: dailyJournalSheetRows(sortedJournals) },
+    { name: "Summary", rows: summarySheetRows(sortedTrades, sortedJournals, range) },
+    { name: "Monthly Summary", rows: monthlySummarySheetRows(sortedTrades) },
+    { name: "By Setup", rows: groupedTradeSheetRows(sortedTrades, "Setup Name", (trade) => trade.setupName) },
+    { name: "By Session", rows: groupedTradeSheetRows(sortedTrades, "Session", (trade) => trade.session) },
+    { name: "By Weekday", rows: weekdaySheetRows(sortedTrades) },
+    { name: "Exit Ranking", rows: exitComparisonSheetRows(sortedTrades) },
+    { name: "Tags", rows: tagSheetRows(sortedTrades, sortedJournals) },
+    { name: "Attachments Index", rows: attachmentIndexSheetRows(attachmentSources) },
+  ];
+}
+
+function rawAttachmentValues(value: unknown) {
   const rawAttachments = Array.isArray(value)
     ? value
     : typeof value === "string" && value.trim()
       ? parseAttachmentJson(value) || parseAttachmentText(value)
       : [];
 
-  if (!Array.isArray(rawAttachments)) {
-    return [];
+  return Array.isArray(rawAttachments) ? rawAttachments : [];
+}
+
+function normalizeAttachment(attachment: unknown): TradeAttachment | null {
+  if (!attachment || typeof attachment !== "object") {
+    return null;
   }
 
-  return rawAttachments
-    .map((attachment): TradeAttachment | null => {
-      if (!attachment || typeof attachment !== "object") {
-        return null;
-      }
+  const item = attachment as Partial<TradeAttachment> & {
+    sharedUrl?: unknown;
+    shortUrl?: unknown;
+  };
+  const url =
+    textValue(item.url) || textValue(item.shortUrl) || textValue(item.sharedUrl);
 
-      const item = attachment as Partial<TradeAttachment> & {
-        sharedUrl?: unknown;
-        shortUrl?: unknown;
-      };
-      const url =
-        textValue(item.url) || textValue(item.shortUrl) || textValue(item.sharedUrl);
+  if (!url) {
+    return null;
+  }
 
-      if (!url) {
-        return null;
-      }
+  return {
+    contentType: textValue(item.contentType),
+    filename: textValue(item.filename) || "Attachment",
+    id: textValue(item.id) || crypto.randomUUID(),
+    size: Number.isFinite(Number(item.size)) ? Math.max(0, Number(item.size)) : 0,
+    uploadedAt: Number.isFinite(Number(item.uploadedAt)) ? Number(item.uploadedAt) : Date.now(),
+    url,
+  };
+}
 
-      return {
-        contentType: textValue(item.contentType),
-        filename: textValue(item.filename) || "Attachment",
-        id: textValue(item.id) || crypto.randomUUID(),
-        size: Number.isFinite(Number(item.size)) ? Math.max(0, Number(item.size)) : 0,
-        uploadedAt: Number.isFinite(Number(item.uploadedAt)) ? Number(item.uploadedAt) : Date.now(),
-        url,
-      };
-    })
+function normalizeAttachments(value: unknown): TradeAttachment[] {
+  return rawAttachmentValues(value)
+    .map(normalizeAttachment)
     .filter((attachment): attachment is TradeAttachment => Boolean(attachment));
+}
+
+function normalizeRestorableAttachments(value: unknown): RestorableAttachment[] {
+  return rawAttachmentValues(value)
+    .map((attachment): RestorableAttachment | null => {
+      const normalizedAttachment = normalizeAttachment(attachment);
+      if (!normalizedAttachment || !attachment || typeof attachment !== "object") {
+        return normalizedAttachment;
+      }
+
+      const backupPath = textValue((attachment as { backupPath?: unknown }).backupPath);
+      return backupPath ? { ...normalizedAttachment, backupPath } : normalizedAttachment;
+    })
+    .filter((attachment): attachment is RestorableAttachment => Boolean(attachment));
 }
 
 function parseAttachmentJson(value: string) {
@@ -785,6 +1370,149 @@ function searchableTradeText(trade: ExitTrade) {
     .toLowerCase();
 }
 
+function resultMatchesFilter(actualR: number, filter: ResultFilter) {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "win") {
+    return actualR > 0;
+  }
+
+  if (filter === "loss") {
+    return actualR < 0;
+  }
+
+  return actualR === 0;
+}
+
+function paRatingMatchesFilter(rating: number, filter: DailyRatingFilter) {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "high") {
+    return rating >= 8;
+  }
+
+  if (filter === "mid") {
+    return rating >= 5 && rating < 8;
+  }
+
+  return rating >= 0 && rating < 5;
+}
+
+function breakevenMatchesFilter(count: number, filter: BreakevenFilter) {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "none") {
+    return count === 0;
+  }
+
+  if (filter === "one-plus") {
+    return count >= 1;
+  }
+
+  return count >= 2;
+}
+
+function journalFiltersActive(filters: JournalFilters) {
+  return (
+    filters.beHit !== "all" ||
+    filters.breakeven !== "all" ||
+    filters.paRating !== "all" ||
+    filters.result !== "all" ||
+    Boolean(filters.session || filters.setup || filters.tag)
+  );
+}
+
+function tradeMatchesFilters(
+  trade: ExitTrade,
+  filters: JournalFilters,
+  dailyJournalByDate: Map<string, DailyJournal>,
+) {
+  if (filters.session && trade.session !== filters.session) {
+    return false;
+  }
+
+  if (filters.setup && trade.setupName !== filters.setup) {
+    return false;
+  }
+
+  if (filters.beHit !== "all" && trade.beHit !== filters.beHit) {
+    return false;
+  }
+
+  if (!resultMatchesFilter(trade.actualR, filters.result)) {
+    return false;
+  }
+
+  const journal = dailyJournalByDate.get(trade.date);
+  if (filters.tag) {
+    const normalizedTag = filters.tag.toLowerCase();
+    const tradeHasTag = tagList(trade).some((tag) => tag.toLowerCase() === normalizedTag);
+    const journalHasTag = journal ? tagList(journal).some((tag) => tag.toLowerCase() === normalizedTag) : false;
+    if (!tradeHasTag && !journalHasTag) {
+      return false;
+    }
+  }
+
+  if (filters.paRating !== "all" || filters.breakeven !== "all") {
+    if (!journal) {
+      return false;
+    }
+
+    if (!paRatingMatchesFilter(journal.priceActionRating, filters.paRating)) {
+      return false;
+    }
+
+    if (!breakevenMatchesFilter(journal.breakevenTrades, filters.breakeven)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function dailyJournalMatchesFilters(journal: DailyJournal, filters: JournalFilters) {
+  if (!paRatingMatchesFilter(journal.priceActionRating, filters.paRating)) {
+    return false;
+  }
+
+  if (!breakevenMatchesFilter(journal.breakevenTrades, filters.breakeven)) {
+    return false;
+  }
+
+  if (filters.tag && !tagList(journal).some((tag) => tag.toLowerCase() === filters.tag.toLowerCase())) {
+    return false;
+  }
+
+  return true;
+}
+
+function readClientCookie(name: string) {
+  const encodedName = `${encodeURIComponent(name)}=`;
+  return (
+    document.cookie
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(encodedName))
+      ?.slice(encodedName.length) ?? ""
+  );
+}
+
+function writeClientCookie(name: string, value: string, maxAgeDays = 365) {
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Path=/; Max-Age=${
+    maxAgeDays * 24 * 60 * 60
+  }; SameSite=Lax`;
+}
+
+function deleteClientCookie(name: string) {
+  document.cookie = `${encodeURIComponent(name)}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
 function filenamePart(label: string) {
   return (
     label
@@ -794,78 +1522,8 @@ function filenamePart(label: string) {
   );
 }
 
-function toCsv(trades: ExitTrade[]) {
-  const headers = [
-    "id",
-    "date",
-    "day",
-    "instrument",
-    "direction",
-    "session",
-    "setupName",
-    "beHit",
-    "firstTpR",
-    "maxR",
-    "actualR",
-    "tags",
-    "firstTpResult",
-    "onePointFiveResult",
-    "twoRResult",
-    "threeRResult",
-    "notes",
-  ];
-
-  const escapeCell = (value: string | number) =>
-    `"${String(value).replaceAll('"', '""')}"`;
-
-  const rows = trades.map((trade) => {
-    const result = strategyResult(trade);
-    return [
-      trade.id,
-      trade.date,
-      dayName(trade.date),
-      trade.instrument,
-      trade.direction,
-      trade.session,
-      trade.setupName,
-      trade.beHit,
-      trade.firstTpR,
-      trade.maxR,
-      trade.actualR,
-      trade.tags,
-      result.firstTp,
-      result.onePointFive,
-      result.twoR,
-      result.threeR,
-      trade.notes,
-    ];
-  });
-
-  return [headers, ...rows]
-    .map((row) => row.map((cell) => escapeCell(cell)).join(","))
-    .join("\n");
-}
-
 const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const excelColumns = [
-  "ID",
-  "Date",
-  "Day",
-  "Instrument",
-  "Direction",
-  "Session",
-  "Setup Name",
-  "BE Hit",
-  "First TP R",
-  "Max R",
-  "Actual R",
-  "Tags",
-  "First TP Result",
-  "1.5R Result",
-  "2R Result",
-  "3R Result",
-  "Notes",
-] as const;
+const zipMime = "application/zip";
 
 function downloadFile(filename: string, body: string, type: string) {
   const blob = new Blob([body], { type });
@@ -881,41 +1539,44 @@ function downloadBlob(filename: string, blob: Blob) {
   URL.revokeObjectURL(url);
 }
 
-function toXlsxBlob(trades: ExitTrade[]) {
-  const rows = [
-    [...excelColumns],
-    ...trades.map((trade) => {
-      const result = strategyResult(trade);
-      return [
-        trade.id,
-        trade.date,
-        dayName(trade.date),
-        trade.instrument,
-        trade.direction,
-        trade.session,
-        trade.setupName,
-        trade.beHit,
-        trade.firstTpR,
-        trade.maxR,
-        trade.actualR,
-        trade.tags,
-        result.firstTp,
-        result.onePointFive,
-        result.twoR,
-        result.threeR,
-        trade.notes,
-      ];
-    }),
-  ];
-  const sheetXml = worksheetXml(rows);
+function bytesToArrayBuffer(bytes: Uint8Array) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
 
-  return createStoredZip({
+function toXlsxBlob(trades: ExitTrade[]) {
+  return createWorkbookXlsx([{ name: "Trades", rows: tradeSheetRows(trades) }]);
+}
+
+function toCompleteXlsxBlob(trades: ExitTrade[], journals: DailyJournal[], range: ActiveReportRange) {
+  return createWorkbookXlsx(completeWorkbookSheets(trades, journals, range));
+}
+
+function createWorkbookXlsx(sheets: WorkbookSheet[]) {
+  const preparedSheets = prepareWorkbookSheets(sheets);
+  const worksheetOverrides = preparedSheets
+    .map(
+      (sheet) =>
+        `  <Override PartName="/xl/worksheets/sheet${sheet.id}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+    )
+    .join("\n");
+  const workbookSheets = preparedSheets
+    .map((sheet) => `    <sheet name="${escapeXml(sheet.name)}" sheetId="${sheet.id}" r:id="rId${sheet.id}"/>`)
+    .join("\n");
+  const workbookRelationships = preparedSheets
+    .map(
+      (sheet) =>
+        `  <Relationship Id="rId${sheet.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${sheet.id}.xml"/>`,
+    )
+    .join("\n");
+  const files: Record<string, ZipFileBody> = {
     "[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+${worksheetOverrides}
 </Types>`,
     "_rels/.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -924,18 +1585,44 @@ function toXlsxBlob(trades: ExitTrade[]) {
     "xl/workbook.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <sheets>
-    <sheet name="Trades" sheetId="1" r:id="rId1"/>
+${workbookSheets}
   </sheets>
 </workbook>`,
     "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+${workbookRelationships}
 </Relationships>`,
-    "xl/worksheets/sheet1.xml": sheetXml,
+  };
+
+  preparedSheets.forEach((sheet) => {
+    files[`xl/worksheets/sheet${sheet.id}.xml`] = worksheetXml(sheet.rows);
+  });
+
+  return createStoredZip(files, xlsxMime);
+}
+
+function prepareWorkbookSheets(sheets: WorkbookSheet[]) {
+  const used = new Set<string>();
+  return sheets.map((sheet, index) => {
+    const base = sanitizeSheetName(sheet.name);
+    let name = base;
+    let suffix = 2;
+    while (used.has(name.toLowerCase())) {
+      const extension = ` ${suffix}`;
+      name = `${base.slice(0, 31 - extension.length)}${extension}`;
+      suffix += 1;
+    }
+    used.add(name.toLowerCase());
+    return { ...sheet, id: index + 1, name };
   });
 }
 
-function worksheetXml(rows: Array<Array<number | string>>) {
+function sanitizeSheetName(name: string) {
+  return name.replace(/[\][:*?/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31) || "Sheet";
+}
+
+function worksheetXml(rows: SheetCell[][]) {
+  const maxColumns = Math.max(1, ...rows.map((row) => row.length));
   const body = rows
     .map((row, rowIndex) => {
       const rowNumber = rowIndex + 1;
@@ -945,7 +1632,8 @@ function worksheetXml(rows: Array<Array<number | string>>) {
           if (typeof value === "number") {
             return `<c r="${ref}"><v>${value}</v></c>`;
           }
-          return `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
+          const text = typeof value === "boolean" ? String(value) : String(value ?? "");
+          return `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(text)}</t></is></c>`;
         })
         .join("");
       return `<row r="${rowNumber}">${cells}</row>`;
@@ -954,13 +1642,9 @@ function worksheetXml(rows: Array<Array<number | string>>) {
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:L${Math.max(rows.length, 1)}"/>
+  <dimension ref="A1:${columnName(maxColumns)}${Math.max(rows.length, 1)}"/>
   <cols>
-    <col min="1" max="1" width="38" customWidth="1"/>
-    <col min="2" max="2" width="13" customWidth="1"/>
-    <col min="3" max="3" width="12" customWidth="1"/>
-    <col min="4" max="11" width="14" customWidth="1"/>
-    <col min="12" max="12" width="42" customWidth="1"/>
+    <col min="1" max="${maxColumns}" width="18" customWidth="1"/>
   </cols>
   <sheetData>${body}</sheetData>
 </worksheet>`;
@@ -984,12 +1668,12 @@ async function parseXlsxTrades(file: File) {
   return rowsToTrades(rows);
 }
 
-async function unzipWorkbook(buffer: ArrayBuffer) {
+async function unzipWorkbook(buffer: ArrayBuffer, fileDescription = "an Excel workbook") {
   const bytes = new Uint8Array(buffer);
   const decoder = new TextDecoder();
   const eocdOffset = findEndOfCentralDirectory(bytes);
   if (eocdOffset < 0) {
-    throw new Error("That file does not look like an Excel workbook.");
+    throw new Error(`That file does not look like ${fileDescription}.`);
   }
 
   const entryCount = readUint16(bytes, eocdOffset + 10);
@@ -998,7 +1682,7 @@ async function unzipWorkbook(buffer: ArrayBuffer) {
 
   for (let entry = 0; entry < entryCount; entry += 1) {
     if (readUint32(bytes, centralOffset) !== 0x02014b50) {
-      throw new Error("Could not read the Excel workbook directory.");
+      throw new Error(`Could not read ${fileDescription} directory.`);
     }
 
     const method = readUint16(bytes, centralOffset + 10);
@@ -1019,7 +1703,7 @@ async function unzipWorkbook(buffer: ArrayBuffer) {
       } else if (method === 8) {
         files[name] = await inflateDeflateRaw(compressedData);
       } else {
-        throw new Error("That Excel file uses an unsupported compression format.");
+        throw new Error(`That file uses an unsupported compression format.`);
       }
     }
 
@@ -1034,7 +1718,7 @@ async function inflateDeflateRaw(data: Uint8Array) {
     throw new Error("This browser cannot import compressed Excel files yet. Try exporting from this journal first.");
   }
 
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  const stream = new Blob([bytesToArrayBuffer(data)]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -1320,7 +2004,7 @@ function columnIndex(ref: string) {
     .reduce((sum, character) => sum * 26 + character.charCodeAt(0) - 64, 0) - 1;
 }
 
-function createStoredZip(files: Record<string, string>) {
+function createStoredZip(files: Record<string, ZipFileBody>, type = zipMime) {
   const encoder = new TextEncoder();
   const chunks: Uint8Array[] = [];
   const centralDirectory: Uint8Array[] = [];
@@ -1328,7 +2012,7 @@ function createStoredZip(files: Record<string, string>) {
 
   Object.entries(files).forEach(([name, body]) => {
     const nameBytes = encoder.encode(name);
-    const data = encoder.encode(body);
+    const data = zipFileBytes(body, encoder);
     const checksum = crc32(data);
     const localHeader = zipLocalHeader(nameBytes, data.length, checksum);
     const centralHeader = zipCentralHeader(nameBytes, data.length, checksum, offset);
@@ -1344,7 +2028,241 @@ function createStoredZip(files: Record<string, string>) {
   });
   chunks.push(zipEndRecord(centralDirectory.length, offset - centralStart, centralStart));
 
-  return new Blob(chunks, { type: xlsxMime });
+  return new Blob(chunks.map(bytesToArrayBuffer), { type });
+}
+
+function zipFileBytes(body: ZipFileBody, encoder: TextEncoder) {
+  if (typeof body === "string") {
+    return encoder.encode(body);
+  }
+
+  return body instanceof Uint8Array ? body : new Uint8Array(body);
+}
+
+function assignBackupPaths(sources: AttachmentSource[]) {
+  const usedPaths = new Set<string>();
+  return sources.map((source, index) => {
+    const folder = source.sourceType === "Trade" ? "trades" : "daily-journals";
+    const extension = fileExtension(source.attachment.filename, source.attachment.contentType);
+    const fallback = `attachment-${String(index + 1).padStart(3, "0")}${extension}`;
+    const safeName = safeExportSegment(source.attachment.filename, fallback);
+    const filename = extension && !safeName.toLowerCase().endsWith(extension) ? `${safeName}${extension}` : safeName;
+    const path = uniqueZipPath(
+      `attachments/${folder}/${source.date || "undated"}/${String(index + 1).padStart(3, "0")}-${filename}`,
+      usedPaths,
+    );
+    return { ...source, backupPath: path };
+  });
+}
+
+function uniqueZipPath(path: string, usedPaths: Set<string>) {
+  if (!usedPaths.has(path)) {
+    usedPaths.add(path);
+    return path;
+  }
+
+  const slashIndex = path.lastIndexOf("/");
+  const dotIndex = path.lastIndexOf(".");
+  const hasExtension = dotIndex > slashIndex;
+  const base = hasExtension ? path.slice(0, dotIndex) : path;
+  const extension = hasExtension ? path.slice(dotIndex) : "";
+  let copy = 2;
+  let candidate = `${base}-${copy}${extension}`;
+  while (usedPaths.has(candidate)) {
+    copy += 1;
+    candidate = `${base}-${copy}${extension}`;
+  }
+  usedPaths.add(candidate);
+  return candidate;
+}
+
+function attachmentSourceKey(sourceType: AttachmentSource["sourceType"], sourceId: string) {
+  return `${sourceType}:${sourceId}`;
+}
+
+function attachmentsBySource(sources: AttachmentSource[]) {
+  const map = new Map<string, AttachmentSource[]>();
+  sources.forEach((source) => {
+    const key = attachmentSourceKey(source.sourceType, source.sourceId);
+    map.set(key, [...(map.get(key) ?? []), source]);
+  });
+  return map;
+}
+
+function backupAttachment(source: AttachmentSource) {
+  return {
+    ...source.attachment,
+    backupPath: source.backupPath ?? "",
+  };
+}
+
+function backupTradeRecord(trade: ExitTrade, sourceMap: Map<string, AttachmentSource[]>) {
+  return {
+    ...trade,
+    attachments: (sourceMap.get(attachmentSourceKey("Trade", trade.id)) ?? []).map(backupAttachment),
+  };
+}
+
+function backupDailyJournalRecord(journal: DailyJournal, sourceMap: Map<string, AttachmentSource[]>) {
+  return {
+    ...journal,
+    attachments: (sourceMap.get(attachmentSourceKey("Daily Journal", journal.id)) ?? []).map(backupAttachment),
+  };
+}
+
+function backupReadmeMarkdown(exportedAt: string, attachmentCount: number, skippedCount: number) {
+  return [
+    "# Adalwolf Trade Journal Backup",
+    "",
+    `Exported at: ${exportedAt}`,
+    "",
+    "This ZIP is a safety backup for the trading journal.",
+    "",
+    "Contents:",
+    "- `backup.json`: all trades, daily journals, attachment metadata, and backup paths.",
+    "- `ai-analysis.md`: plain-English analysis packet for ChatGPT, Codex, Claude, or another AI reviewer.",
+    "- `complete-journal-export.xlsx`: spreadsheet workbook with raw data and calculated analysis sheets.",
+    "- `attachments/`: downloaded screenshot and journal attachment files.",
+    "",
+    "Not included:",
+    "- Login credentials and password hashes.",
+    "- Public Device Files, because those are convenience files rather than private journal records.",
+    "",
+    `Attachments included: ${attachmentCount}`,
+    `Attachment download warnings: ${skippedCount}`,
+  ].join("\n");
+}
+
+function aiAnalysisMarkdown(
+  trades: ExitTrade[],
+  journals: DailyJournal[],
+  range: ActiveReportRange,
+  sources: AttachmentSource[],
+) {
+  const summary = tradeStatsForExport(trades);
+  const bestSetups = groupedTradeSheetRows(trades, "Setup Name", (trade) => trade.setupName)
+    .slice(1, 6)
+    .map((row) => `- ${row[0]}: ${Number(row[2]).toFixed(2)}R over ${row[1]} trades`);
+  const bestSessions = groupedTradeSheetRows(trades, "Session", (trade) => trade.session)
+    .slice(1, 6)
+    .map((row) => `- ${row[0]}: ${Number(row[2]).toFixed(2)}R over ${row[1]} trades`);
+
+  return [
+    "# AI Trading Journal Analysis Packet",
+    "",
+    "Use this packet to analyze execution, discipline, exits, setup quality, and journal patterns.",
+    "",
+    "## Context",
+    "- Journal type: R-based futures trading journal",
+    "- Main goal: improve patience, discipline, execution, and exit quality",
+    `- Export range: ${range.label}`,
+    "",
+    "## Summary",
+    `- Trades: ${summary.trades}`,
+    `- Daily journals: ${journals.length}`,
+    `- Net R: ${summary.netR.toFixed(2)}R`,
+    `- Win rate: ${summary.winRate.toFixed(1)}%`,
+    `- Average R: ${summary.avgR.toFixed(2)}R`,
+    `- Profit factor: ${ratio(summary.profitFactor)}`,
+    `- Attachments/screenshots referenced: ${sources.length}`,
+    "",
+    "## Best Setups By Net R",
+    bestSetups.length ? bestSetups.join("\n") : "- No setup data available.",
+    "",
+    "## Best Sessions By Net R",
+    bestSessions.length ? bestSessions.join("\n") : "- No session data available.",
+    "",
+    "## Suggested AI Review Questions",
+    "- What patterns do you see in my losing trades?",
+    "- Which setup and session combination has the best expectancy?",
+    "- Where am I exiting too early or leaving too much R behind?",
+    "- What behavior should I focus on next month?",
+    "- What do my daily narratives suggest about psychology and execution?",
+    "",
+    "## Screenshot Notes",
+    "Screenshots are included in the ZIP `attachments/` folder when they could be downloaded. See `backup.json` or the workbook `Attachments Index` sheet for exact file mapping.",
+  ].join("\n");
+}
+
+async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]) {
+  const exportedAt = new Date().toISOString();
+  const range: ActiveReportRange = { label: "All data", mode: "all" };
+  const sources = assignBackupPaths(collectAttachmentSources(trades, journals));
+  const sourceMap = attachmentsBySource(sources);
+  const skippedAttachments: Array<{
+    error: string;
+    filename: string;
+    sourceId: string;
+    sourceType: AttachmentSource["sourceType"];
+    url: string;
+  }> = [];
+  const files: Record<string, ZipFileBody> = {};
+
+  for (const source of sources) {
+    try {
+      const response = await fetch(source.attachment.url, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      files[source.backupPath as string] = await response.arrayBuffer();
+    } catch (error) {
+      skippedAttachments.push({
+        error: error instanceof Error ? error.message : "Unable to download attachment",
+        filename: source.attachment.filename,
+        sourceId: source.sourceId,
+        sourceType: source.sourceType,
+        url: source.attachment.url,
+      });
+    }
+  }
+
+  const backup = {
+    app: "Adalwolf Trade Journal",
+    exportedAt,
+    format: "adalwolf-journal-backup",
+    includes: {
+      attachmentFiles: sources.length - skippedAttachments.length,
+      authSettings: false,
+      deviceFiles: false,
+      screenshots: true,
+    },
+    skippedAttachments,
+    version: "1.1",
+    data: {
+      dailyJournals: journals.map((journal) => backupDailyJournalRecord(journal, sourceMap)),
+      trades: trades.map((trade) => backupTradeRecord(trade, sourceMap)),
+    },
+    attachmentIndex: sources.map((source) => ({
+      backupPath: source.backupPath,
+      contentType: source.attachment.contentType,
+      date: source.date,
+      filename: source.attachment.filename,
+      id: source.attachment.id,
+      size: source.attachment.size,
+      sourceId: source.sourceId,
+      sourceLabel: source.sourceLabel,
+      sourceType: source.sourceType,
+      uploadedAt: source.attachment.uploadedAt,
+      url: source.attachment.url,
+    })),
+  };
+
+  files["backup.json"] = JSON.stringify(backup, null, 2);
+  files["README.md"] = backupReadmeMarkdown(exportedAt, sources.length - skippedAttachments.length, skippedAttachments.length);
+  files["ai-analysis.md"] = aiAnalysisMarkdown(trades, journals, range, sources);
+  files["complete-journal-export.xlsx"] = await createWorkbookXlsx(
+    completeWorkbookSheets(trades, journals, range, sources),
+  ).arrayBuffer();
+
+  if (skippedAttachments.length) {
+    files["attachment-download-warnings.json"] = JSON.stringify(skippedAttachments, null, 2);
+  }
+
+  return {
+    attachmentCount: sources.length - skippedAttachments.length,
+    blob: createStoredZip(files, zipMime),
+    skippedCount: skippedAttachments.length,
+  };
 }
 
 function zipLocalHeader(nameBytes: Uint8Array, size: number, checksum: number) {
@@ -1573,13 +2491,172 @@ function draftFromDailyJournal(journal: DailyJournal): DraftDailyJournal {
   };
 }
 
-function parseJsonTrades(parsed: unknown) {
-  const rawTrades = Array.isArray(parsed)
+function jsonTradeValues(parsed: unknown) {
+  return Array.isArray(parsed)
     ? parsed
     : parsed && typeof parsed === "object" && "trades" in parsed
       ? (parsed as { trades?: unknown[] }).trades ?? []
+      : parsed && typeof parsed === "object" && "data" in parsed
+        ? ((parsed as { data?: { trades?: unknown[] } }).data?.trades ?? [])
       : [];
+}
+
+function jsonDailyJournalValues(parsed: unknown) {
+  return parsed && typeof parsed === "object" && "dailyJournals" in parsed
+    ? (parsed as { dailyJournals?: unknown[] }).dailyJournals ?? []
+    : parsed && typeof parsed === "object" && "journals" in parsed
+      ? (parsed as { journals?: unknown[] }).journals ?? []
+      : parsed && typeof parsed === "object" && "data" in parsed
+        ? ((parsed as { data?: { dailyJournals?: unknown[] } }).data?.dailyJournals ?? [])
+        : [];
+}
+
+function parseJsonTrades(parsed: unknown) {
+  const rawTrades = jsonTradeValues(parsed);
   return rawTrades.map(normalizeTrade).filter((trade): trade is ImportTrade => Boolean(trade));
+}
+
+function parseJsonDailyJournals(parsed: unknown) {
+  const rawJournals = jsonDailyJournalValues(parsed);
+
+  return rawJournals.map(normalizeDailyJournal).filter((journal): journal is ImportDailyJournal => Boolean(journal));
+}
+
+function parseJsonImport(parsed: unknown) {
+  return {
+    dailyJournals: parseJsonDailyJournals(parsed),
+    trades: parseJsonTrades(parsed),
+  };
+}
+
+function normalizeRestorableTrade(value: unknown): RestorableTrade | null {
+  const trade = normalizeTrade(value);
+  if (!trade || !value || typeof value !== "object") {
+    return null;
+  }
+
+  return {
+    ...trade,
+    attachments: normalizeRestorableAttachments((value as { attachments?: unknown }).attachments),
+  };
+}
+
+function normalizeRestorableDailyJournal(value: unknown): RestorableDailyJournal | null {
+  const journal = normalizeDailyJournal(value);
+  if (!journal || !value || typeof value !== "object") {
+    return null;
+  }
+
+  return {
+    ...journal,
+    attachments: normalizeRestorableAttachments((value as { attachments?: unknown }).attachments),
+  };
+}
+
+function parseRestorableJsonImport(parsed: unknown) {
+  return {
+    dailyJournals: jsonDailyJournalValues(parsed)
+      .map(normalizeRestorableDailyJournal)
+      .filter((journal): journal is RestorableDailyJournal => Boolean(journal)),
+    trades: jsonTradeValues(parsed)
+      .map(normalizeRestorableTrade)
+      .filter((trade): trade is RestorableTrade => Boolean(trade)),
+  };
+}
+
+function backupJsonEntry(files: Record<string, Uint8Array>) {
+  return (
+    files["backup.json"] ??
+    Object.entries(files).find(([name]) => name.toLowerCase().endsWith("/backup.json"))?.[1]
+  );
+}
+
+function plainAttachment(attachment: RestorableAttachment): TradeAttachment {
+  return {
+    contentType: attachment.contentType,
+    filename: attachment.filename,
+    id: attachment.id,
+    size: attachment.size,
+    uploadedAt: attachment.uploadedAt,
+    url: attachment.url,
+  };
+}
+
+function restoredAttachmentFilename(attachment: RestorableAttachment) {
+  const fallbackExtension = fileExtension(attachment.filename, attachment.contentType);
+  const filename = safeExportSegment(attachment.filename, `restored-attachment${fallbackExtension}`);
+  return fallbackExtension && !filename.toLowerCase().endsWith(fallbackExtension)
+    ? `${filename}${fallbackExtension}`
+    : filename;
+}
+
+function restoreDataMonths(trades: RestorableTrade[], journals: RestorableDailyJournal[]) {
+  return Array.from(
+    new Set(
+      [...trades.map((trade) => monthKey(trade.date)), ...journals.map((journal) => monthKey(journal.date))].filter(
+        Boolean,
+      ),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function restoreDataYears(months: string[]) {
+  return Array.from(new Set(months.map((month) => month.slice(0, 4)))).sort((left, right) => left.localeCompare(right));
+}
+
+function restoreRangeLabel(range: ActiveReportRange) {
+  if (range.mode === "all") {
+    return "All backup data";
+  }
+
+  if (range.mode === "year") {
+    return `Year ${range.year}`;
+  }
+
+  if (range.from && range.to && range.from !== range.to) {
+    return `${monthTabLabel(range.from)} - ${monthTabLabel(range.to)}`;
+  }
+
+  return monthLabel(range.from ?? range.to ?? initialMonth);
+}
+
+function restoreRangeFromSelection(
+  mode: ReportMode,
+  month: string,
+  year: string,
+  startMonth: string,
+  endMonth: string,
+): ActiveReportRange {
+  if (mode === "all") {
+    return { label: "All backup data", mode };
+  }
+
+  if (mode === "year") {
+    return { label: `Year ${year}`, mode, year };
+  }
+
+  const range = mode === "custom" ? normalizeMonthRange(startMonth, endMonth) : { from: month, to: month };
+  return { ...range, label: restoreRangeLabel({ ...range, mode }), mode };
+}
+
+function restorableAttachmentCount(trades: RestorableTrade[], journals: RestorableDailyJournal[]) {
+  return (
+    trades.reduce((sum, trade) => sum + trade.attachments.length, 0) +
+    journals.reduce((sum, journal) => sum + journal.attachments.length, 0)
+  );
+}
+
+function scopedRestoreData(pendingRestore: PendingRestore, range: ActiveReportRange, fallbackMonth: string) {
+  const trades = pendingRestore.trades.filter((trade) => dateMatchesReportRange(trade.date, range, fallbackMonth));
+  const dailyJournals = pendingRestore.dailyJournals.filter((journal) =>
+    dateMatchesReportRange(journal.date, range, fallbackMonth),
+  );
+
+  return {
+    attachmentReferences: restorableAttachmentCount(trades, dailyJournals),
+    dailyJournals,
+    trades,
+  };
 }
 
 export default function Home() {
@@ -1597,7 +2674,11 @@ export default function Home() {
   const [deviceFolder, setDeviceFolder] = useState<DeviceFolder | null>(null);
   const [deviceSafety, setDeviceSafety] = useState<DeviceSafety | null>(null);
   const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
-  const [attachmentPreview, setAttachmentPreview] = useState<TradeAttachment | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null);
+  const [attachmentZoom, setAttachmentZoom] = useState(1);
+  const [filters, setFilters] = useState<JournalFilters>(() => defaultJournalFilters);
+  const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
+  const [backupReminderDismissedAt, setBackupReminderDismissedAt] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedTextTarget, setExpandedTextTarget] = useState<TextEditorTarget | null>(null);
   const [isDataMenuOpen, setIsDataMenuOpen] = useState(false);
@@ -1606,6 +2687,7 @@ export default function Home() {
   const [isEntryOpen, setIsEntryOpen] = useState(false);
   const [isDayDetailOpen, setIsDayDetailOpen] = useState(false);
   const [isDailyJournalEditing, setIsDailyJournalEditing] = useState(false);
+  const [isBackupReminderReady, setIsBackupReminderReady] = useState(false);
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isDailyJournalLoading, setIsDailyJournalLoading] = useState(true);
@@ -1618,7 +2700,13 @@ export default function Home() {
   const [logSearch, setLogSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<PendingRestore | null>(null);
   const [passwordDraft, setPasswordDraft] = useState<PasswordDraft>(() => emptyPasswordDraft());
+  const [restoreEndMonth, setRestoreEndMonth] = useState(initialMonth);
+  const [restoreMonth, setRestoreMonth] = useState(initialMonth);
+  const [restoreScopeMode, setRestoreScopeMode] = useState<ReportMode>("all");
+  const [restoreStartMonth, setRestoreStartMonth] = useState(initialMonth);
+  const [restoreYear, setRestoreYear] = useState(initialMonth.slice(0, 4));
   const [selectedTradeDetailId, setSelectedTradeDetailId] = useState<string | null>(null);
   const [deviceNotice, setDeviceNotice] = useState("");
   const [securityNotice, setSecurityNotice] = useState("");
@@ -1709,6 +2797,16 @@ export default function Home() {
   }, [loadDailyJournals, loadDeviceFiles, loadTrades]);
 
   useEffect(() => {
+    const storedBackupAt = Number(decodeURIComponent(readClientCookie(backupReminderStorageKey)));
+    const storedDismissedAt = Number(decodeURIComponent(readClientCookie(backupReminderDismissedStorageKey)));
+    setLastBackupAt(Number.isFinite(storedBackupAt) && storedBackupAt > 0 ? storedBackupAt : null);
+    setBackupReminderDismissedAt(
+      Number.isFinite(storedDismissedAt) && storedDismissedAt > 0 ? storedDismissedAt : null,
+    );
+    setIsBackupReminderReady(true);
+  }, []);
+
+  useEffect(() => {
     if (!isDataMenuOpen) {
       return undefined;
     }
@@ -1748,7 +2846,7 @@ export default function Home() {
   );
 
   const currentReportYear = currentMonthKey().slice(0, 4);
-  const reportRange = useMemo(() => {
+  const reportRange = useMemo<ActiveReportRange>(() => {
     if (reportMode === "all") {
       return {
         label: "All trades",
@@ -1781,37 +2879,104 @@ export default function Home() {
 
   const reportTrades = useMemo(
     () =>
-      sortedTrades.filter((trade) => {
-        if (reportRange.mode === "all") {
-          return true;
-        }
-        if (reportRange.mode === "year") {
-          return trade.date.startsWith(`${reportRange.year}-`);
-        }
-
-        const key = monthKey(trade.date);
-        return key >= (reportRange.from ?? selectedMonth) && key <= (reportRange.to ?? selectedMonth);
-      }),
+      sortedTrades.filter((trade) => dateMatchesReportRange(trade.date, reportRange, selectedMonth)),
     [reportRange, selectedMonth, sortedTrades],
   );
-
-  const filteredReportTrades = useMemo(() => {
-    const query = logSearch.trim().toLowerCase();
-    if (!query) {
-      return reportTrades;
-    }
-
-    return reportTrades.filter((trade) => searchableTradeText(trade).includes(query));
-  }, [logSearch, reportTrades]);
-
-  const sortedReportTrades = useMemo(
-    () => [...filteredReportTrades].sort((left, right) => compareTradesForSort(left, right, tradeSort)),
-    [filteredReportTrades, tradeSort],
+  const reportDailyJournals = useMemo(
+    () =>
+      dailyJournals
+        .filter((journal) => dateMatchesReportRange(journal.date, reportRange, selectedMonth))
+        .sort((left, right) => left.date.localeCompare(right.date)),
+    [dailyJournals, reportRange, selectedMonth],
   );
-
   const dailyJournalByDate = useMemo(
     () => new Map(dailyJournals.map((journal) => [journal.date, journal])),
     [dailyJournals],
+  );
+  const filteredMonthlyTrades = useMemo(
+    () => monthlyTrades.filter((trade) => tradeMatchesFilters(trade, filters, dailyJournalByDate)),
+    [dailyJournalByDate, filters, monthlyTrades],
+  );
+  const filterOptions = useMemo(() => {
+    const sessions = new Set<string>();
+    const setups = new Set<string>();
+    const tags = new Set<string>();
+
+    reportTrades.forEach((trade) => {
+      if (trade.session) {
+        sessions.add(trade.session);
+      }
+      if (trade.setupName) {
+        setups.add(trade.setupName);
+      }
+      tagList(trade).forEach((tag) => tags.add(tag));
+    });
+    reportDailyJournals.forEach((journal) => tagList(journal).forEach((tag) => tags.add(tag)));
+
+    return {
+      sessions: [...sessions].sort((left, right) => left.localeCompare(right)),
+      setups: [...setups].sort((left, right) => left.localeCompare(right)),
+      tags: [...tags].sort((left, right) => left.localeCompare(right)),
+    };
+  }, [reportDailyJournals, reportTrades]);
+  const pendingRestoreRange = useMemo(
+    () =>
+      pendingRestore
+        ? restoreRangeFromSelection(restoreScopeMode, restoreMonth, restoreYear, restoreStartMonth, restoreEndMonth)
+        : null,
+    [pendingRestore, restoreEndMonth, restoreMonth, restoreScopeMode, restoreStartMonth, restoreYear],
+  );
+  const pendingRestoreScoped = useMemo(
+    () =>
+      pendingRestore && pendingRestoreRange
+        ? scopedRestoreData(pendingRestore, pendingRestoreRange, restoreMonth)
+        : null,
+    [pendingRestore, pendingRestoreRange, restoreMonth],
+  );
+
+  const filteredReportTrades = useMemo(() => {
+    return reportTrades.filter((trade) => tradeMatchesFilters(trade, filters, dailyJournalByDate));
+  }, [dailyJournalByDate, filters, reportTrades]);
+
+  const sortedReportTrades = useMemo(
+    () => {
+      const query = logSearch.trim().toLowerCase();
+      const searchedTrades = query
+        ? filteredReportTrades.filter((trade) => searchableTradeText(trade).includes(query))
+        : filteredReportTrades;
+      return [...searchedTrades].sort((left, right) => compareTradesForSort(left, right, tradeSort));
+    },
+    [filteredReportTrades, logSearch, tradeSort],
+  );
+
+  const filteredTradeDates = useMemo(
+    () => new Set(filteredReportTrades.map((trade) => trade.date)),
+    [filteredReportTrades],
+  );
+  const filteredReportDailyJournals = useMemo(
+    () =>
+      reportDailyJournals.filter((journal) => {
+        const matchesJournalFilters = dailyJournalMatchesFilters(journal, filters);
+        if (!matchesJournalFilters) {
+          return false;
+        }
+
+        return filteredTradeDates.has(journal.date) || (!filters.session && !filters.setup && filters.result === "all" && filters.beHit === "all");
+      }),
+    [filteredTradeDates, filters, reportDailyJournals],
+  );
+  const activeFilterCount = useMemo(
+    () =>
+      [
+        filters.session,
+        filters.setup,
+        filters.tag,
+        filters.result !== "all" ? filters.result : "",
+        filters.beHit !== "all" ? filters.beHit : "",
+        filters.paRating !== "all" ? filters.paRating : "",
+        filters.breakeven !== "all" ? filters.breakeven : "",
+      ].filter(Boolean).length,
+    [filters],
   );
   const selectedDayTrades = useMemo(
     () => sortedTrades.filter((trade) => trade.date === selectedDay).sort(compareTradeEntryOrder),
@@ -1890,27 +3055,27 @@ export default function Home() {
       {
         key: "actual",
         label: "Actual",
-        values: reportTrades.map((trade) => trade.actualR),
+        values: filteredReportTrades.map((trade) => trade.actualR),
       },
       {
         key: "firstTp",
         label: "First TP",
-        values: reportTrades.map((trade) => strategyResult(trade).firstTp),
+        values: filteredReportTrades.map((trade) => strategyResult(trade).firstTp),
       },
       {
         key: "onePointFive",
         label: "1.5R",
-        values: reportTrades.map((trade) => strategyResult(trade).onePointFive),
+        values: filteredReportTrades.map((trade) => strategyResult(trade).onePointFive),
       },
       {
         key: "twoR",
         label: "2R",
-        values: reportTrades.map((trade) => strategyResult(trade).twoR),
+        values: filteredReportTrades.map((trade) => strategyResult(trade).twoR),
       },
       {
         key: "threeR",
         label: "3R",
-        values: reportTrades.map((trade) => strategyResult(trade).threeR),
+        values: filteredReportTrades.map((trade) => strategyResult(trade).threeR),
       },
     ];
 
@@ -1924,32 +3089,32 @@ export default function Home() {
         winRate: strategy.values.length ? (wins / strategy.values.length) * 100 : 0,
       };
     });
-  }, [reportTrades]);
+  }, [filteredReportTrades]);
 
   const stats = useMemo(() => {
-    const totalActual = reportTrades.reduce((sum, trade) => sum + trade.actualR, 0);
-    const totalMax = reportTrades.reduce((sum, trade) => sum + trade.maxR, 0);
-    const winners = reportTrades.filter((trade) => trade.actualR > 0);
-    const losers = reportTrades.filter((trade) => trade.actualR < 0);
+    const totalActual = filteredReportTrades.reduce((sum, trade) => sum + trade.actualR, 0);
+    const totalMax = filteredReportTrades.reduce((sum, trade) => sum + trade.maxR, 0);
+    const winners = filteredReportTrades.filter((trade) => trade.actualR > 0);
+    const losers = filteredReportTrades.filter((trade) => trade.actualR < 0);
     const wins = winners.length;
-    const beHits = reportTrades.filter((trade) => trade.beHit === "Yes").length;
+    const beHits = filteredReportTrades.filter((trade) => trade.beHit === "Yes").length;
     const grossWin = winners.reduce((sum, trade) => sum + trade.actualR, 0);
     const grossLoss = Math.abs(losers.reduce((sum, trade) => sum + trade.actualR, 0));
     const avgWin = winners.length ? grossWin / winners.length : 0;
     const avgLoss = losers.length ? grossLoss / losers.length : 0;
     const profitFactor = grossLoss ? grossWin / grossLoss : grossWin ? Infinity : 0;
     const avgWinLoss = avgLoss ? avgWin / avgLoss : avgWin ? Infinity : 0;
-    const avgMax = reportTrades.length
-      ? reportTrades.reduce((sum, trade) => sum + trade.maxR, 0) / reportTrades.length
+    const avgMax = filteredReportTrades.length
+      ? filteredReportTrades.reduce((sum, trade) => sum + trade.maxR, 0) / filteredReportTrades.length
       : 0;
     const bestMethod = strategyRows.reduce(
       (best, row) => (row.total > best.total ? row : best),
       strategyRows[0] ?? { label: "Actual", total: 0 },
     );
 
-    const winRate = reportTrades.length ? (wins / reportTrades.length) * 100 : 0;
+    const winRate = filteredReportTrades.length ? (wins / filteredReportTrades.length) * 100 : 0;
     const captureRate = totalMax ? (totalActual / totalMax) * 100 : 0;
-    const beRate = reportTrades.length ? (beHits / reportTrades.length) * 100 : 0;
+    const beRate = filteredReportTrades.length ? (beHits / filteredReportTrades.length) * 100 : 0;
     const score = clamp(
       winRate * 0.28 +
         clamp(captureRate, 0, 100) * 0.28 +
@@ -1960,7 +3125,7 @@ export default function Home() {
     );
 
     return {
-      avgActual: reportTrades.length ? totalActual / reportTrades.length : 0,
+      avgActual: filteredReportTrades.length ? totalActual / filteredReportTrades.length : 0,
       avgMax,
       avgWinLoss,
       beRate,
@@ -1972,11 +3137,11 @@ export default function Home() {
       profitFactor,
       score,
       totalActual,
-      trades: reportTrades.length,
+      trades: filteredReportTrades.length,
       winRate,
       wins,
     };
-  }, [reportTrades, strategyRows]);
+  }, [filteredReportTrades, strategyRows]);
 
   const exitComparisonRows = useMemo(() => {
     const actualTotal = strategyRows.find((row) => row.key === "actual")?.total ?? 0;
@@ -1996,7 +3161,7 @@ export default function Home() {
       wins: 0,
     }));
 
-    reportTrades.forEach((trade) => {
+    filteredReportTrades.forEach((trade) => {
       const row = rows[weekdayIndex(trade.date)];
       row.total += trade.actualR;
       row.trades += 1;
@@ -2016,7 +3181,7 @@ export default function Home() {
           right.winRate - left.winRate ||
           weekdayLabels.indexOf(left.label) - weekdayLabels.indexOf(right.label),
       );
-  }, [reportTrades]);
+  }, [filteredReportTrades]);
 
   const visibleWeekdayRows = useMemo(
     () => weekdayRows.filter((row) => row.trades > 0 || !weekendLabels.has(row.label)),
@@ -2024,12 +3189,125 @@ export default function Home() {
   );
 
   const bestWeekday = weekdayRows.find((row) => row.trades > 0);
+  const setupSessionRows = useMemo(() => {
+    const groups = new Map<string, ExitTrade[]>();
+    filteredReportTrades.forEach((trade) => {
+      const key = `${trade.setupName || "No setup"} · ${trade.session || "No session"}`;
+      groups.set(key, [...(groups.get(key) ?? []), trade]);
+    });
+
+    return [...groups.entries()]
+      .map(([label, rows]) => {
+        const summary = tradeStatsForExport(rows);
+        return {
+          average: summary.avgR,
+          label,
+          total: summary.netR,
+          trades: summary.trades,
+          winRate: summary.winRate,
+        };
+      })
+      .sort((left, right) => right.total - left.total || right.winRate - left.winRate || left.label.localeCompare(right.label))
+      .slice(0, 5);
+  }, [filteredReportTrades]);
+
+  const tagInsightRows = useMemo(() => {
+    const groups = new Map<string, { journals: number; trades: ExitTrade[] }>();
+    filteredReportTrades.forEach((trade) => {
+      tagList(trade).forEach((tag) => {
+        const current = groups.get(tag) ?? { journals: 0, trades: [] };
+        current.trades.push(trade);
+        groups.set(tag, current);
+      });
+    });
+    filteredReportDailyJournals.forEach((journal) => {
+      tagList(journal).forEach((tag) => {
+        const current = groups.get(tag) ?? { journals: 0, trades: [] };
+        current.journals += 1;
+        groups.set(tag, current);
+      });
+    });
+
+    return [...groups.entries()]
+      .map(([tag, value]) => {
+        const summary = tradeStatsForExport(value.trades);
+        return {
+          journals: value.journals,
+          tag,
+          total: summary.netR,
+          trades: summary.trades,
+          winRate: summary.winRate,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.total - left.total ||
+          right.trades + right.journals - (left.trades + left.journals) ||
+          left.tag.localeCompare(right.tag),
+      )
+      .slice(0, 6);
+  }, [filteredReportDailyJournals, filteredReportTrades]);
+
+  const tradesByFilteredDate = useMemo(() => {
+    const map = new Map<string, ExitTrade[]>();
+    filteredReportTrades.forEach((trade) => {
+      map.set(trade.date, [...(map.get(trade.date) ?? []), trade]);
+    });
+    return map;
+  }, [filteredReportTrades]);
+
+  const paRatingRows = useMemo(() => {
+    const groups = new Map<string, ExitTrade[]>();
+    filteredReportDailyJournals.forEach((journal) => {
+      const label =
+        journal.priceActionRating >= 8
+          ? "8-10"
+          : journal.priceActionRating >= 5
+            ? "5-6.5"
+            : "0-4.5";
+      groups.set(label, [...(groups.get(label) ?? []), ...(tradesByFilteredDate.get(journal.date) ?? [])]);
+    });
+
+    return ["8-10", "5-6.5", "0-4.5"].map((label) => {
+      const rows = groups.get(label) ?? [];
+      const summary = tradeStatsForExport(rows);
+      return {
+        label,
+        total: summary.netR,
+        trades: summary.trades,
+        winRate: summary.winRate,
+      };
+    });
+  }, [filteredReportDailyJournals, tradesByFilteredDate]);
+
+  const breakevenDayRows = useMemo(() => {
+    const groups = new Map<string, { days: number; trades: ExitTrade[] }>();
+    filteredReportDailyJournals.forEach((journal) => {
+      const label = journal.breakevenTrades >= 2 ? "2+ BE" : journal.breakevenTrades === 1 ? "1 BE" : "0 BE";
+      const current = groups.get(label) ?? { days: 0, trades: [] };
+      current.days += 1;
+      current.trades.push(...(tradesByFilteredDate.get(journal.date) ?? []));
+      groups.set(label, current);
+    });
+
+    return ["0 BE", "1 BE", "2+ BE"].map((label) => {
+      const value = groups.get(label) ?? { days: 0, trades: [] };
+      const summary = tradeStatsForExport(value.trades);
+      return {
+        days: value.days,
+        label,
+        total: summary.netR,
+        trades: summary.trades,
+        winRate: summary.winRate,
+      };
+    });
+  }, [filteredReportDailyJournals, tradesByFilteredDate]);
 
   const monthlyStats = useMemo(() => {
-    const totalActual = monthlyTrades.reduce((sum, trade) => sum + trade.actualR, 0);
-    const totalMax = monthlyTrades.reduce((sum, trade) => sum + trade.maxR, 0);
-    const wins = monthlyTrades.filter((trade) => trade.actualR > 0).length;
-    const methodTotals = monthlyTrades.reduce(
+    const totalActual = filteredMonthlyTrades.reduce((sum, trade) => sum + trade.actualR, 0);
+    const totalMax = filteredMonthlyTrades.reduce((sum, trade) => sum + trade.maxR, 0);
+    const wins = filteredMonthlyTrades.filter((trade) => trade.actualR > 0).length;
+    const methodTotals = filteredMonthlyTrades.reduce(
       (totals, trade) => {
         const result = strategyResult(trade);
         totals.firstTp += result.firstTp;
@@ -2052,10 +3330,10 @@ export default function Home() {
       best,
       captureRate: totalMax ? (totalActual / totalMax) * 100 : 0,
       totalActual,
-      trades: monthlyTrades.length,
-      winRate: monthlyTrades.length ? (wins / monthlyTrades.length) * 100 : 0,
+      trades: filteredMonthlyTrades.length,
+      winRate: filteredMonthlyTrades.length ? (wins / filteredMonthlyTrades.length) * 100 : 0,
     };
-  }, [monthlyTrades]);
+  }, [filteredMonthlyTrades]);
 
   const calendarCells = useMemo(() => {
     const lead = firstWeekday(selectedMonth);
@@ -2068,7 +3346,7 @@ export default function Home() {
 
     for (let day = 1; day <= days; day += 1) {
       const date = `${selectedMonth}-${String(day).padStart(2, "0")}`;
-      const dayTrades = monthlyTrades.filter((trade) => trade.date === date);
+      const dayTrades = filteredMonthlyTrades.filter((trade) => trade.date === date);
       cells.push({
         count: dayTrades.length,
         date,
@@ -2083,7 +3361,7 @@ export default function Home() {
     }
 
     return cells;
-  }, [dailyJournalByDate, monthlyTrades, selectedMonth]);
+  }, [dailyJournalByDate, filteredMonthlyTrades, selectedMonth]);
 
   const weeklyRows = useMemo(
     () =>
@@ -2100,7 +3378,7 @@ export default function Home() {
   );
 
   const cumulativeSeries = useMemo(() => {
-    const reportAscending = [...reportTrades].sort((a, b) => {
+    const reportAscending = [...filteredReportTrades].sort((a, b) => {
       const dateSort = a.date.localeCompare(b.date);
       return dateSort || (a.createdAt ?? 0) - (b.createdAt ?? 0);
     });
@@ -2109,7 +3387,7 @@ export default function Home() {
       (points, trade) => [...points, (points.at(-1) ?? 0) + trade.actualR],
       [0],
     );
-  }, [reportTrades]);
+  }, [filteredReportTrades]);
 
   const cumulativeChart = useMemo(() => chartShape(cumulativeSeries), [cumulativeSeries]);
 
@@ -2127,6 +3405,19 @@ export default function Home() {
     [stats.beRate, stats.captureRate, stats.profitFactor, stats.winRate],
   );
 
+  const backupReminderDue =
+    isBackupReminderReady &&
+    (trades.length > 0 || dailyJournals.length > 0) &&
+    (lastBackupAt === null || Date.now() - lastBackupAt > backupReminderIntervalMs) &&
+    (backupReminderDismissedAt === null || Date.now() - backupReminderDismissedAt > 24 * 60 * 60 * 1000);
+  const lastBackupLabel = lastBackupAt
+    ? new Date(lastBackupAt).toLocaleDateString("en-US", {
+        day: "2-digit",
+        month: "short",
+        timeZone: appTimeZone,
+        year: "numeric",
+      })
+    : "Never";
   const selectedMonthLabel = monthLabel(selectedMonth);
 
   function goToMonth(key: string) {
@@ -2152,6 +3443,29 @@ export default function Home() {
       return "↕";
     }
     return tradeSort.direction === "asc" ? "↑" : "↓";
+  }
+
+  function updateFilter<K extends keyof JournalFilters>(field: K, value: JournalFilters[K]) {
+    setFilters((current) => ({ ...current, [field]: value }));
+  }
+
+  function clearFilters() {
+    setFilters(defaultJournalFilters);
+    setLogSearch("");
+  }
+
+  function markBackupExported() {
+    const timestamp = Date.now();
+    writeClientCookie(backupReminderStorageKey, String(timestamp));
+    deleteClientCookie(backupReminderDismissedStorageKey);
+    setLastBackupAt(timestamp);
+    setBackupReminderDismissedAt(null);
+  }
+
+  function dismissBackupReminder() {
+    const timestamp = Date.now();
+    writeClientCookie(backupReminderDismissedStorageKey, String(timestamp), 1);
+    setBackupReminderDismissedAt(timestamp);
   }
 
   function showDatePicker(input: HTMLInputElement) {
@@ -2546,12 +3860,12 @@ export default function Home() {
     return data.file;
   }
 
-  async function uploadJournalAttachment(file: File, filename: string) {
+  async function uploadJournalAttachmentBody(body: BodyInit, filename: string, contentType: string, size: number) {
     const response = await fetch(`/api/journal-attachments?filename=${encodeURIComponent(filename)}`, {
-      body: file,
+      body,
       headers: {
-        "content-type": file.type || "application/octet-stream",
-        "x-journal-attachment-size": String(file.size),
+        "content-type": contentType || "application/octet-stream",
+        "x-journal-attachment-size": String(size),
       },
       method: "POST",
     });
@@ -2564,6 +3878,151 @@ export default function Home() {
     }
 
     return data.attachment;
+  }
+
+  async function uploadJournalAttachment(file: File, filename: string) {
+    return uploadJournalAttachmentBody(file, filename, file.type || "application/octet-stream", file.size);
+  }
+
+  async function restoreAttachmentFiles(
+    restoreTrades: RestorableTrade[],
+    restoreJournals: RestorableDailyJournal[],
+    zipFiles: Record<string, Uint8Array>,
+  ): Promise<RestoredJournalData> {
+    const uploadedByPath = new Map<string, TradeAttachment>();
+    let attachmentCount = 0;
+    let missingAttachmentCount = 0;
+
+    async function restoreAttachment(attachment: RestorableAttachment) {
+      if (!attachment.backupPath) {
+        return plainAttachment(attachment);
+      }
+
+      const cachedAttachment = uploadedByPath.get(attachment.backupPath);
+      if (cachedAttachment) {
+        return cachedAttachment;
+      }
+
+      const fileBytes = zipFiles[attachment.backupPath];
+      if (!fileBytes) {
+        missingAttachmentCount += 1;
+        return plainAttachment(attachment);
+      }
+
+      const contentType = attachment.contentType || "application/octet-stream";
+      const restoredAttachment = await uploadJournalAttachmentBody(
+        new Blob([bytesToArrayBuffer(fileBytes)], { type: contentType }),
+        restoredAttachmentFilename(attachment),
+        contentType,
+        fileBytes.byteLength,
+      );
+      uploadedByPath.set(attachment.backupPath, restoredAttachment);
+      attachmentCount += 1;
+      return restoredAttachment;
+    }
+
+    const restoredTrades: ImportTrade[] = [];
+    for (const trade of restoreTrades) {
+      const attachments: TradeAttachment[] = [];
+      for (const attachment of trade.attachments) {
+        attachments.push(await restoreAttachment(attachment));
+      }
+
+      restoredTrades.push({ ...trade, attachments });
+    }
+
+    const restoredJournals: ImportDailyJournal[] = [];
+    for (const journal of restoreJournals) {
+      const attachments: TradeAttachment[] = [];
+      for (const attachment of journal.attachments) {
+        attachments.push(await restoreAttachment(attachment));
+      }
+
+      restoredJournals.push({ ...journal, attachments });
+    }
+
+    return {
+      attachmentCount,
+      dailyJournals: restoredJournals,
+      missingAttachmentCount,
+      trades: restoredTrades,
+    };
+  }
+
+  function mergeableBackupData(restoreTrades: RestorableTrade[], restoreJournals: RestorableDailyJournal[]) {
+    const existingIds = new Set(trades.map((trade) => trade.id));
+    const existingFingerprints = new Set(trades.map((trade) => tradeFingerprint(trade)));
+    const existingJournalDates = new Set(dailyJournals.map((journal) => journal.date));
+    const seenIds = new Set<string>();
+    const seenFingerprints = new Set<string>();
+    const seenJournalDates = new Set<string>();
+    const readyTrades: RestorableTrade[] = [];
+    const readyJournals: RestorableDailyJournal[] = [];
+    let skippedTrades = 0;
+    let skippedJournals = 0;
+
+    restoreTrades.forEach((trade) => {
+      const fingerprint = tradeFingerprint(trade);
+      if (
+        (trade.id && (existingIds.has(trade.id) || seenIds.has(trade.id))) ||
+        existingFingerprints.has(fingerprint) ||
+        seenFingerprints.has(fingerprint)
+      ) {
+        skippedTrades += 1;
+        return;
+      }
+
+      if (trade.id) {
+        seenIds.add(trade.id);
+      }
+      seenFingerprints.add(fingerprint);
+      readyTrades.push(trade);
+    });
+
+    restoreJournals.forEach((journal) => {
+      if (existingJournalDates.has(journal.date) || seenJournalDates.has(journal.date)) {
+        skippedJournals += 1;
+        return;
+      }
+
+      seenJournalDates.add(journal.date);
+      readyJournals.push(journal);
+    });
+
+    return { readyJournals, readyTrades, skippedJournals, skippedTrades };
+  }
+
+  async function deleteJournalRecord(endpoint: string, id: string, fallbackMessage: string) {
+    const response = await fetch(`${endpoint}?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (handleUnauthorized(response)) {
+      throw new Error("Login required.");
+    }
+    if (!response.ok) {
+      const data = (await response.json()) as { error?: string };
+      throw new Error(data.error ?? fallbackMessage);
+    }
+  }
+
+  async function clearCurrentJournalData(range: ActiveReportRange, fallbackMonth: string) {
+    const tradesToDelete = trades.filter((trade) => dateMatchesReportRange(trade.date, range, fallbackMonth));
+    const journalsToDelete = dailyJournals.filter((journal) =>
+      dateMatchesReportRange(journal.date, range, fallbackMonth),
+    );
+
+    for (const trade of tradesToDelete) {
+      await deleteJournalRecord("/api/trades", trade.id, "Unable to clear existing trades");
+    }
+
+    for (const journal of journalsToDelete) {
+      await deleteJournalRecord("/api/daily-journals", journal.id, "Unable to clear existing daily journals");
+    }
+
+    setTrades((current) => current.filter((trade) => !dateMatchesReportRange(trade.date, range, fallbackMonth)));
+    setDailyJournals((current) =>
+      current.filter((journal) => !dateMatchesReportRange(journal.date, range, fallbackMonth)),
+    );
   }
 
   async function handleDeviceUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -2678,6 +4137,44 @@ export default function Home() {
     selectedTradeDetailId,
   ]);
 
+  useEffect(() => {
+    if (!attachmentPreview) {
+      return undefined;
+    }
+
+    function handlePreviewKeys(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAttachmentPreview(null);
+        setAttachmentZoom(1);
+        return;
+      }
+
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        setAttachmentPreview((current) => {
+          if (!current?.attachments.length) {
+            return current;
+          }
+
+          const offset = event.key === "ArrowLeft" ? -1 : 1;
+          const index = (current.index + offset + current.attachments.length) % current.attachments.length;
+          return { ...current, index };
+        });
+        setAttachmentZoom(1);
+        return;
+      }
+
+      if (event.key === "+" || event.key === "=") {
+        setAttachmentZoom((current) => clamp(current + 0.25, 0.75, 2.5));
+      } else if (event.key === "-") {
+        setAttachmentZoom((current) => clamp(current - 0.25, 0.75, 2.5));
+      }
+    }
+
+    document.addEventListener("keydown", handlePreviewKeys);
+    return () => document.removeEventListener("keydown", handlePreviewKeys);
+  }, [attachmentPreview]);
+
   function removeDailyJournalAttachment(id: string) {
     setDailyDraft((current) => ({
       ...current,
@@ -2738,14 +4235,35 @@ export default function Home() {
     }
   }
 
-  function exportJournal(format: "csv" | "json" | "xlsx") {
+  async function exportJournal(format: "backup" | "json" | "xlsx") {
     setIsDataMenuOpen(false);
+
+    if (format === "backup") {
+      setIsSaving(true);
+      setNotice("Preparing full backup...");
+      try {
+        const backup = await createFullBackupZip(trades, dailyJournals);
+        downloadBlob(`exit-journal-full-backup-${currentDateKey()}.zip`, backup.blob);
+        markBackupExported();
+        setNotice(
+          `Full backup exported with ${backup.attachmentCount} attachment${
+            backup.attachmentCount === 1 ? "" : "s"
+          }.${backup.skippedCount ? ` ${backup.skippedCount} attachment warning${backup.skippedCount === 1 ? "" : "s"}.` : ""}`,
+        );
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Unable to export full backup");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
 
     if (format === "json") {
       downloadFile(
         `${exportBaseName}.json`,
         JSON.stringify(
           {
+            dailyJournals: filteredReportDailyJournals,
             exportedAt: new Date().toISOString(),
             range: reportRange,
             trades: sortedReportTrades,
@@ -2758,12 +4276,7 @@ export default function Home() {
       return;
     }
 
-    if (format === "csv") {
-      downloadFile(`${exportBaseName}.csv`, toCsv(sortedReportTrades), "text/csv");
-      return;
-    }
-
-    downloadBlob(`${exportBaseName}.xlsx`, toXlsxBlob(sortedReportTrades));
+    downloadBlob(`${exportBaseName}-workbook.xlsx`, toCompleteXlsxBlob(sortedReportTrades, filteredReportDailyJournals, reportRange));
   }
 
   function downloadTemplate() {
@@ -2771,14 +4284,73 @@ export default function Home() {
     downloadBlob("exit-journal-template.xlsx", toXlsxBlob([]));
   }
 
-  async function importTrades(importTrades: ImportTrade[], skippedById = 0) {
+  async function importDailyJournals(importJournals: ImportDailyJournal[], existingDateOverride?: Set<string>) {
+    if (!importJournals.length) {
+      return { imported: 0, skipped: 0 };
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    const existingDates = existingDateOverride ?? new Set(dailyJournals.map((journal) => journal.date));
+
+    for (const journal of importJournals) {
+      if (existingDates.has(journal.date)) {
+        skipped += 1;
+        continue;
+      }
+
+      const response = await fetch("/api/daily-journals", {
+        body: JSON.stringify(journal),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      if (handleUnauthorized(response)) {
+        return { imported, skipped };
+      }
+      if (!response.ok) {
+        const data = (await response.json()) as { error?: string };
+        throw new Error(data.error ?? "Unable to import daily journals");
+      }
+
+      existingDates.add(journal.date);
+      imported += 1;
+    }
+
+    if (imported) {
+      await loadDailyJournals();
+    }
+
+    return { imported, skipped };
+  }
+
+  async function importTrades(
+    importTrades: ImportTrade[],
+    skippedById = 0,
+    importJournals: ImportDailyJournal[] = [],
+    options: ImportBatchOptions = {},
+  ) {
     setPendingImport(null);
 
-    if (!importTrades.length) {
+    if (!importTrades.length && !importJournals.length) {
       setNotice(
-        skippedById
-          ? `${skippedById} existing trade${skippedById === 1 ? "" : "s"} skipped. Nothing new to import.`
-          : "No new trades to import.",
+        [
+          options.noticePrefix ?? "",
+          skippedById ? `${skippedById} existing trade${skippedById === 1 ? "" : "s"} skipped.` : "",
+          options.extraSkippedDailyJournals
+            ? `${options.extraSkippedDailyJournals} existing daily journal${
+                options.extraSkippedDailyJournals === 1 ? "" : "s"
+              } skipped.`
+            : "",
+          typeof options.restoredAttachments === "number"
+            ? `${options.restoredAttachments} attachment${options.restoredAttachments === 1 ? "" : "s"} restored.`
+            : "",
+          options.missingAttachments
+            ? `${options.missingAttachments} attachment file${options.missingAttachments === 1 ? "" : "s"} missing from ZIP.`
+            : "",
+          skippedById || options.extraSkippedDailyJournals ? "Nothing new to import." : "No new trades to import.",
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
       return;
     }
@@ -2803,13 +4375,30 @@ export default function Home() {
         importedCount += 1;
       }
 
-      await loadTrades();
+      const journalCounts = await importDailyJournals(importJournals, options.dailyJournalExistingDates);
+      if (importedCount) {
+        await loadTrades();
+      }
       setNotice(
-        `${importedCount} trade${importedCount === 1 ? "" : "s"} imported.${
-          skippedById
-            ? ` ${skippedById} existing trade${skippedById === 1 ? "" : "s"} skipped.`
-            : ""
-        }`,
+        [
+          options.noticePrefix ?? "",
+          `${importedCount} trade${importedCount === 1 ? "" : "s"} imported.`,
+          `${journalCounts.imported} daily journal${journalCounts.imported === 1 ? "" : "s"} imported.`,
+          skippedById ? `${skippedById} existing trade${skippedById === 1 ? "" : "s"} skipped.` : "",
+          journalCounts.skipped || options.extraSkippedDailyJournals
+            ? `${journalCounts.skipped + (options.extraSkippedDailyJournals ?? 0)} existing daily journal${
+                journalCounts.skipped + (options.extraSkippedDailyJournals ?? 0) === 1 ? "" : "s"
+              } skipped.`
+            : "",
+          typeof options.restoredAttachments === "number"
+            ? `${options.restoredAttachments} attachment${options.restoredAttachments === 1 ? "" : "s"} restored.`
+            : "",
+          options.missingAttachments
+            ? `${options.missingAttachments} attachment file${options.missingAttachments === 1 ? "" : "s"} missing from ZIP.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to import trades");
@@ -2818,7 +4407,7 @@ export default function Home() {
     }
   }
 
-  async function reviewImport(importedTrades: ImportTrade[], sourceName: string) {
+  async function reviewImport(importedTrades: ImportTrade[], sourceName: string, importJournals: ImportDailyJournal[] = []) {
     const existingIds = new Set(trades.map((trade) => trade.id));
     const existingFingerprints = new Set(trades.map((trade) => tradeFingerprint(trade)));
     const readyTrades: ImportTrade[] = [];
@@ -2841,6 +4430,7 @@ export default function Home() {
 
     if (duplicateMatches.length) {
       setPendingImport({
+        dailyJournals: importJournals,
         duplicateMatches,
         readyTrades,
         skippedById,
@@ -2849,7 +4439,7 @@ export default function Home() {
       return;
     }
 
-    await importTrades(readyTrades, skippedById);
+    await importTrades(readyTrades, skippedById, importJournals);
   }
 
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
@@ -2863,19 +4453,124 @@ export default function Home() {
     setNotice("");
     try {
       const normalized = file.name.toLowerCase().endsWith(".xlsx")
-        ? await parseXlsxTrades(file)
-        : parseJsonTrades(JSON.parse(await file.text()));
+        ? { dailyJournals: [], trades: await parseXlsxTrades(file) }
+        : parseJsonImport(JSON.parse(await file.text()));
 
-      if (!normalized.length) {
-        throw new Error("No valid trades found in that file.");
+      if (!normalized.trades.length && !normalized.dailyJournals.length) {
+        throw new Error("No valid trades or daily journals found in that file.");
       }
 
-      await reviewImport(normalized, file.name);
+      await reviewImport(normalized.trades, file.name, normalized.dailyJournals);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to import trades");
     } finally {
       setIsSaving(false);
       event.target.value = "";
+    }
+  }
+
+  async function handleRestoreBackup(event: ChangeEvent<HTMLInputElement>, mode: RestoreMode) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setIsDataMenuOpen(false);
+    setIsSaving(true);
+    setNotice("Reading backup...");
+
+    try {
+      const zipFiles = await unzipWorkbook(await file.arrayBuffer(), "a backup ZIP");
+      const backupJson = backupJsonEntry(zipFiles);
+      if (!backupJson) {
+        throw new Error("No backup.json found in that ZIP.");
+      }
+
+      const parsedBackup = JSON.parse(new TextDecoder().decode(backupJson)) as unknown;
+      const restorable = parseRestorableJsonImport(parsedBackup);
+      if (!restorable.trades.length && !restorable.dailyJournals.length) {
+        throw new Error("No valid trades or daily journals found in that backup.");
+      }
+
+      const availableMonths = restoreDataMonths(restorable.trades, restorable.dailyJournals);
+      const availableYears = restoreDataYears(availableMonths);
+      const firstMonth = availableMonths[0] ?? selectedMonth;
+      const lastMonth = availableMonths.at(-1) ?? selectedMonth;
+      setRestoreScopeMode("all");
+      setRestoreMonth(lastMonth);
+      setRestoreStartMonth(firstMonth);
+      setRestoreEndMonth(lastMonth);
+      setRestoreYear(lastMonth.slice(0, 4));
+      setPendingRestore({
+        availableMonths,
+        availableYears,
+        dailyJournals: restorable.dailyJournals,
+        fileName: file.name,
+        mode,
+        trades: restorable.trades,
+        zipFiles,
+      });
+      setNotice("");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to read backup");
+    } finally {
+      setIsSaving(false);
+      event.target.value = "";
+    }
+  }
+
+  async function confirmRestoreBackup() {
+    if (!pendingRestore || !pendingRestoreRange || !pendingRestoreScoped) {
+      return;
+    }
+
+    if (!pendingRestoreScoped.trades.length && !pendingRestoreScoped.dailyJournals.length) {
+      setNotice(`No backup data found for ${pendingRestoreRange.label}.`);
+      return;
+    }
+
+    if (
+      pendingRestore.mode === "replace" &&
+      !window.confirm(
+        `Replace ${pendingRestoreRange.label}? This deletes existing local trades and daily journals in that range before restoring.`,
+      )
+    ) {
+      return;
+    }
+
+    setIsSaving(true);
+    setNotice(pendingRestore.mode === "replace" ? "Restoring selected range..." : "Merging selected range...");
+    try {
+      const selectedData =
+        pendingRestore.mode === "merge"
+          ? mergeableBackupData(pendingRestoreScoped.trades, pendingRestoreScoped.dailyJournals)
+          : {
+              readyJournals: pendingRestoreScoped.dailyJournals,
+              readyTrades: pendingRestoreScoped.trades,
+              skippedJournals: 0,
+              skippedTrades: 0,
+            };
+      const restored = await restoreAttachmentFiles(selectedData.readyTrades, selectedData.readyJournals, pendingRestore.zipFiles);
+
+      if (pendingRestore.mode === "replace") {
+        await clearCurrentJournalData(pendingRestoreRange, restoreMonth);
+      }
+
+      await importTrades(restored.trades, selectedData.skippedTrades, restored.dailyJournals, {
+        dailyJournalExistingDates: pendingRestore.mode === "replace" ? new Set() : undefined,
+        extraSkippedDailyJournals: selectedData.skippedJournals,
+        missingAttachments: restored.missingAttachmentCount,
+        noticePrefix:
+          pendingRestore.mode === "replace"
+            ? `Backup restored for ${pendingRestoreRange.label}.`
+            : `Backup merged for ${pendingRestoreRange.label}.`,
+        restoredAttachments: restored.attachmentCount,
+      });
+      setPendingRestore(null);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to restore backup");
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -2890,10 +4585,53 @@ export default function Home() {
       : dailyDraft[expandedTextTarget.field]
     : "";
 
-  function renderAttachmentGallery(attachments: TradeAttachment[], editable = false) {
+  function openAttachmentPreview(
+    attachments: TradeAttachment[],
+    index: number,
+    sourceLabel = "Attachment",
+    sourceDate?: string,
+  ) {
+    setAttachmentPreview({ attachments, index, sourceDate, sourceLabel });
+    setAttachmentZoom(1);
+  }
+
+  function moveAttachmentPreview(offset: number) {
+    setAttachmentPreview((current) => {
+      if (!current?.attachments.length) {
+        return current;
+      }
+
+      const nextIndex = (current.index + offset + current.attachments.length) % current.attachments.length;
+      return { ...current, index: nextIndex };
+    });
+    setAttachmentZoom(1);
+  }
+
+  function openPreviewSourceDay() {
+    if (!attachmentPreview?.sourceDate) {
+      return;
+    }
+
+    setSelectedDay(attachmentPreview.sourceDate);
+    setSelectedMonth(monthKey(attachmentPreview.sourceDate));
+    setIsDayDetailOpen(true);
+    setAttachmentPreview(null);
+  }
+
+  function closeAttachmentPreview() {
+    setAttachmentPreview(null);
+    setAttachmentZoom(1);
+  }
+
+  function renderAttachmentGallery(
+    attachments: TradeAttachment[],
+    editable = false,
+    sourceLabel = "Attachment",
+    sourceDate?: string,
+  ) {
     return (
       <div className="attachment-gallery">
-        {attachments.map((attachment) => {
+        {attachments.map((attachment, index) => {
           const isImage = isImageAttachment(attachment);
           const meta = [
             attachment.size ? fileSizeLabel(attachment.size) : "",
@@ -2910,7 +4648,7 @@ export default function Home() {
                 aria-label={`${isImage ? "Preview" : "Open"} ${attachment.filename}`}
                 onClick={() => {
                   if (isImage) {
-                    setAttachmentPreview(attachment);
+                    openAttachmentPreview(attachments, index, sourceLabel, sourceDate);
                     return;
                   }
 
@@ -3313,7 +5051,7 @@ export default function Home() {
           <small>Paste screenshots here or upload files.</small>
         </div>
         {dailyDraft.attachments.length ? (
-          renderAttachmentGallery(dailyDraft.attachments, true)
+          renderAttachmentGallery(dailyDraft.attachments, true, "Daily Journal Draft", dailyDraft.date || selectedDay)
         ) : (
           <p className="attachment-empty">No screenshots yet.</p>
         )}
@@ -3339,6 +5077,28 @@ export default function Home() {
       </div>
     </form>
   );
+  const restoreTotalAttachments = pendingRestore
+    ? restorableAttachmentCount(pendingRestore.trades, pendingRestore.dailyJournals)
+    : 0;
+  const restoreActionLabel =
+    pendingRestore?.mode === "replace"
+      ? isSaving
+        ? "Restoring..."
+        : "Replace Selected Range"
+      : isSaving
+        ? "Merging..."
+        : "Merge Selected Range";
+  const previewAttachment = attachmentPreview?.attachments[attachmentPreview.index] ?? null;
+  const previewAttachmentMeta = previewAttachment
+    ? [
+        `${(attachmentPreview?.index ?? 0) + 1} of ${attachmentPreview?.attachments.length ?? 1}`,
+        attachmentPreview?.sourceLabel ?? "Attachment",
+        previewAttachment.size ? fileSizeLabel(previewAttachment.size) : "",
+        formatAttachmentDate(previewAttachment.uploadedAt),
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
 
   return (
     <main className={`journal-shell ${isNavCollapsed ? "nav-collapsed" : ""}`} data-theme={theme}>
@@ -3476,15 +5236,43 @@ export default function Home() {
                 <div className="data-menu-section">
                   <span className="data-menu-label">Export Current View</span>
                   <small className="data-menu-note">{reportRange.label}</small>
-                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => exportJournal("xlsx")}>
-                    Excel
+                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => void exportJournal("xlsx")}>
+                    Excel Workbook
                   </button>
-                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => exportJournal("csv")}>
-                    CSV
-                  </button>
-                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => exportJournal("json")}>
+                  <button className="data-menu-item" type="button" role="menuitem" onClick={() => void exportJournal("json")}>
                     JSON
                   </button>
+                </div>
+                <div className="data-menu-section">
+                  <span className="data-menu-label">Backup</span>
+                  <small className="data-menu-note">All trades, daily journals, and screenshots</small>
+                  <button
+                    className="data-menu-item"
+                    disabled={isSaving}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void exportJournal("backup")}
+                  >
+                    Full Backup ZIP
+                  </button>
+                  <label className="data-menu-item file-button" role="menuitem">
+                    Restore ZIP (merge)
+                    <input
+                      accept="application/zip,.zip"
+                      disabled={isSaving}
+                      type="file"
+                      onChange={(event) => void handleRestoreBackup(event, "merge")}
+                    />
+                  </label>
+                  <label className="data-menu-item file-button" role="menuitem">
+                    Restore ZIP (replace)
+                    <input
+                      accept="application/zip,.zip"
+                      disabled={isSaving}
+                      type="file"
+                      onChange={(event) => void handleRestoreBackup(event, "replace")}
+                    />
+                  </label>
                 </div>
                 <div className="data-menu-section device-menu-section">
                   <span className="data-menu-label">Device Files</span>
@@ -3649,6 +5437,113 @@ export default function Home() {
         ) : null}
       </section>
 
+      <section className="journal-filter-panel" aria-label="Journal filters">
+        <div className="filter-panel-heading">
+          <div>
+            <p className="eyebrow">Journal Filters</p>
+            <h2>{activeFilterCount ? `${activeFilterCount} active` : "All trades"}</h2>
+          </div>
+          <div className="filter-panel-summary">
+            <span>
+              Showing <strong>{filteredReportTrades.length}</strong> of {reportTrades.length}
+            </span>
+            <button
+              className="table-action"
+              disabled={!journalFiltersActive(filters) && !logSearch}
+              type="button"
+              onClick={clearFilters}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+        <div className="filter-grid">
+          <label>
+            Session
+            <select value={filters.session} onChange={(event) => updateFilter("session", event.target.value)}>
+              <option value="">All sessions</option>
+              {filterOptions.sessions.map((session) => (
+                <option key={session} value={session}>
+                  {session}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Setup
+            <select value={filters.setup} onChange={(event) => updateFilter("setup", event.target.value)}>
+              <option value="">All setups</option>
+              {filterOptions.setups.map((setup) => (
+                <option key={setup} value={setup}>
+                  {setup}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Tag
+            <select value={filters.tag} onChange={(event) => updateFilter("tag", event.target.value)}>
+              <option value="">All tags</option>
+              {filterOptions.tags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Result
+            <select
+              value={filters.result}
+              onChange={(event) => updateFilter("result", event.target.value as ResultFilter)}
+            >
+              {resultFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            BE Hit
+            <select
+              value={filters.beHit}
+              onChange={(event) => updateFilter("beHit", event.target.value as JournalFilters["beHit"])}
+            >
+              <option value="all">All BE</option>
+              <option value="Yes">BE Yes</option>
+              <option value="No">BE No</option>
+            </select>
+          </label>
+          <label>
+            PA Rating
+            <select
+              value={filters.paRating}
+              onChange={(event) => updateFilter("paRating", event.target.value as DailyRatingFilter)}
+            >
+              {paRatingFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            BE Trades
+            <select
+              value={filters.breakeven}
+              onChange={(event) => updateFilter("breakeven", event.target.value as BreakevenFilter)}
+            >
+              {breakevenFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
+
       <section className="metric-grid" aria-label={`Journal statistics for ${reportRange.label}`}>
         <article className="metric-card primary-metric">
           <span>Net Actual R</span>
@@ -3706,6 +5601,23 @@ export default function Home() {
       </section>
 
       {notice ? <p className="notice dashboard-notice">{notice}</p> : null}
+      {backupReminderDue ? (
+        <section className="backup-reminder-panel" aria-label="Backup reminder">
+          <div>
+            <p className="eyebrow">Backup Reminder</p>
+            <h2>Export a safety ZIP</h2>
+            <small>Last backup: {lastBackupLabel}</small>
+          </div>
+          <div className="backup-reminder-actions">
+            <button className="primary-button compact" disabled={isSaving} type="button" onClick={() => void exportJournal("backup")}>
+              Export Backup
+            </button>
+            <button className="table-action" type="button" onClick={dismissBackupReminder}>
+              Dismiss
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="dashboard-grid" aria-label="Monthly dashboard">
         <section className="dashboard-main-column">
@@ -3885,7 +5797,13 @@ export default function Home() {
                     {!sortedReportTrades.length ? (
                       <tr>
                         <td className="empty-row" colSpan={12}>
-                          {isLoading ? "Loading trades..." : "No trades logged for this range yet."}
+                          {isLoading
+                            ? "Loading trades..."
+                            : reportTrades.length && !filteredReportTrades.length
+                              ? "No trades match the filters."
+                              : filteredReportTrades.length && logSearch
+                                ? "No trades match the search."
+                                : "No trades logged for this range yet."}
                         </td>
                       </tr>
                     ) : null}
@@ -3973,6 +5891,104 @@ export default function Home() {
                     <strong className={toneClass(row.total)}>
                       {row.trades ? rValue(row.total) : "--"}
                     </strong>
+                    <small>{row.trades ? `${percent(row.winRate)} win` : "--"}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="review-panel insight-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Setup Analysis</p>
+                <h2>Setup x Session</h2>
+              </div>
+              <span className="status-pill">{setupSessionRows[0]?.label.split(" · ")[0] ?? "--"}</span>
+            </div>
+            <div className="insight-list">
+              {setupSessionRows.map((row, index) => (
+                <div className="insight-row" key={row.label}>
+                  <span className="rank-badge">#{index + 1}</span>
+                  <div>
+                    <strong>{row.label}</strong>
+                    <small>
+                      {row.trades} trades · avg {rValue(row.average)}
+                    </small>
+                  </div>
+                  <div className="insight-result">
+                    <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
+                    <small>{percent(row.winRate)} win</small>
+                  </div>
+                </div>
+              ))}
+              {!setupSessionRows.length ? <p className="empty-panel-note">No setup data in this view.</p> : null}
+            </div>
+          </article>
+
+          <article className="review-panel insight-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Tag Analysis</p>
+                <h2>Tag Signals</h2>
+              </div>
+              <span className="status-pill">{tagInsightRows[0]?.tag ?? "--"}</span>
+            </div>
+            <div className="tag-signal-grid">
+              {tagInsightRows.map((row) => (
+                <div className="tag-signal-card" key={row.tag}>
+                  <strong>#{row.tag}</strong>
+                  <span className={toneClass(row.total)}>{rValue(row.total)}</span>
+                  <small>
+                    {row.trades} trades · {row.journals} journal days · {percent(row.winRate)} win
+                  </small>
+                </div>
+              ))}
+              {!tagInsightRows.length ? <p className="empty-panel-note">No tags in this view.</p> : null}
+            </div>
+          </article>
+
+          <article className="review-panel insight-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Daily Review</p>
+                <h2>PA Rating Edge</h2>
+              </div>
+            </div>
+            <div className="insight-list">
+              {paRatingRows.map((row) => (
+                <div className="insight-row" key={row.label}>
+                  <span className="rank-badge">{row.label}</span>
+                  <div>
+                    <strong>Price action {row.label}</strong>
+                    <small>{row.trades ? `${row.trades} linked trades` : "No linked trades"}</small>
+                  </div>
+                  <div className="insight-result">
+                    <strong className={toneClass(row.total)}>{row.trades ? rValue(row.total) : "--"}</strong>
+                    <small>{row.trades ? `${percent(row.winRate)} win` : "--"}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="review-panel insight-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Daily Review</p>
+                <h2>BE Day Outcome</h2>
+              </div>
+            </div>
+            <div className="insight-list">
+              {breakevenDayRows.map((row) => (
+                <div className="insight-row" key={row.label}>
+                  <span className="rank-badge">{row.label}</span>
+                  <div>
+                    <strong>{row.days} day{row.days === 1 ? "" : "s"}</strong>
+                    <small>{row.trades ? `${row.trades} linked trades` : "No linked trades"}</small>
+                  </div>
+                  <div className="insight-result">
+                    <strong className={toneClass(row.total)}>{row.trades ? rValue(row.total) : "--"}</strong>
                     <small>{row.trades ? `${percent(row.winRate)} win` : "--"}</small>
                   </div>
                 </div>
@@ -4172,7 +6188,7 @@ export default function Home() {
                     {selectedDailyJournal.attachments.length ? (
                       <section className="notion-block media-block">
                         <span>Screenshots & Attachments</span>
-                        {renderAttachmentGallery(selectedDailyJournal.attachments)}
+                        {renderAttachmentGallery(selectedDailyJournal.attachments, false, "Daily Journal", selectedDailyJournal.date)}
                       </section>
                     ) : null}
                   </div>
@@ -4362,13 +6378,13 @@ export default function Home() {
         </div>
       ) : null}
 
-      {attachmentPreview ? (
+      {attachmentPreview && previewAttachment ? (
         <div
           className="modal-backdrop image-preview-backdrop"
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setAttachmentPreview(null);
+              closeAttachmentPreview();
             }
           }}
         >
@@ -4380,19 +6396,65 @@ export default function Home() {
           >
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Preview</p>
-                <h2 id="attachment-preview-heading">{attachmentPreview.filename}</h2>
+                <p className="eyebrow">Screenshot Viewer</p>
+                <h2 id="attachment-preview-heading">{previewAttachment.filename}</h2>
+                <small className="preview-caption">{previewAttachmentMeta}</small>
               </div>
               <div className="panel-actions">
-                <a className="table-action" href={attachmentPreview.url} target="_blank" rel="noreferrer">
+                <button
+                  className="table-action"
+                  disabled={attachmentPreview.attachments.length <= 1}
+                  type="button"
+                  onClick={() => moveAttachmentPreview(-1)}
+                >
+                  Prev
+                </button>
+                <button
+                  className="table-action"
+                  disabled={attachmentPreview.attachments.length <= 1}
+                  type="button"
+                  onClick={() => moveAttachmentPreview(1)}
+                >
+                  Next
+                </button>
+                <button
+                  className="table-action"
+                  type="button"
+                  onClick={() => setAttachmentZoom((current) => clamp(current - 0.25, 0.75, 2.5))}
+                >
+                  -
+                </button>
+                <button className="table-action" type="button" onClick={() => setAttachmentZoom(1)}>
+                  {Math.round(attachmentZoom * 100)}%
+                </button>
+                <button
+                  className="table-action"
+                  type="button"
+                  onClick={() => setAttachmentZoom((current) => clamp(current + 0.25, 0.75, 2.5))}
+                >
+                  +
+                </button>
+                {attachmentPreview.sourceDate ? (
+                  <button className="table-action" type="button" onClick={openPreviewSourceDay}>
+                    Day
+                  </button>
+                ) : null}
+                <a className="table-action" href={previewAttachment.url} target="_blank" rel="noreferrer">
                   Open
                 </a>
-                <button className="table-action" type="button" onClick={() => setAttachmentPreview(null)}>
+                <button className="table-action" type="button" onClick={closeAttachmentPreview}>
                   Close
                 </button>
               </div>
             </div>
-            <img alt={attachmentPreview.filename} className="image-preview" src={attachmentPreview.url} />
+            <div className="image-preview-stage">
+              <img
+                alt={previewAttachment.filename}
+                className="image-preview"
+                src={previewAttachment.url}
+                style={{ transform: `scale(${attachmentZoom})` }}
+              />
+            </div>
           </section>
         </div>
       ) : null}
@@ -4436,6 +6498,170 @@ export default function Home() {
         </div>
       ) : null}
 
+      {pendingRestore && pendingRestoreRange && pendingRestoreScoped ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isSaving) {
+              setPendingRestore(null);
+            }
+          }}
+        >
+          <section
+            className="entry-panel entry-modal import-review-modal restore-preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="restore-preview-heading"
+          >
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Backup Restore</p>
+                <h2 id="restore-preview-heading">Choose restore range</h2>
+                <small className="restore-file-name">{pendingRestore.fileName}</small>
+              </div>
+              <div className="panel-actions">
+                <button
+                  className="table-action"
+                  disabled={isSaving}
+                  type="button"
+                  onClick={() => setPendingRestore(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <p className="import-review-copy">
+              {pendingRestore.mode === "replace"
+                ? "Replace clears existing local records only inside the selected range, then restores that range from the ZIP."
+                : "Merge imports missing records inside the selected range and skips matching trades or existing daily journal dates."}
+            </p>
+
+            <div className="restore-backup-meta">
+              <span>{pendingRestore.trades.length} trades in backup</span>
+              <span>{pendingRestore.dailyJournals.length} daily journals in backup</span>
+              <span>{restoreTotalAttachments} attachment references</span>
+            </div>
+
+            <div className="restore-range-controls">
+              <div className="report-controls restore-scope-controls" role="group" aria-label="Choose restore scope">
+                {restoreScopeOptions.map((option) => (
+                  <button
+                    className={restoreScopeMode === option.mode ? "active" : ""}
+                    disabled={isSaving}
+                    key={option.mode}
+                    type="button"
+                    onClick={() => setRestoreScopeMode(option.mode)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              {restoreScopeMode === "month" ? (
+                <label className="restore-picker">
+                  Month
+                  <select
+                    disabled={isSaving}
+                    value={restoreMonth}
+                    onChange={(event) => setRestoreMonth(event.target.value)}
+                  >
+                    {pendingRestore.availableMonths.map((month) => (
+                      <option key={month} value={month}>
+                        {monthLabel(month)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {restoreScopeMode === "year" ? (
+                <label className="restore-picker">
+                  Year
+                  <select
+                    disabled={isSaving}
+                    value={restoreYear}
+                    onChange={(event) => setRestoreYear(event.target.value)}
+                  >
+                    {pendingRestore.availableYears.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {restoreScopeMode === "custom" ? (
+                <div className="custom-month-range restore-custom-range">
+                  <label>
+                    From
+                    <input
+                      disabled={isSaving}
+                      max={pendingRestore.availableMonths.at(-1)}
+                      min={pendingRestore.availableMonths[0]}
+                      type="month"
+                      value={restoreStartMonth}
+                      onChange={(event) => setRestoreStartMonth(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    To
+                    <input
+                      disabled={isSaving}
+                      max={pendingRestore.availableMonths.at(-1)}
+                      min={pendingRestore.availableMonths[0]}
+                      type="month"
+                      value={restoreEndMonth}
+                      onChange={(event) => setRestoreEndMonth(event.target.value)}
+                    />
+                  </label>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="import-review-stats restore-preview-stats">
+              <div>
+                <strong>{pendingRestoreScoped.trades.length}</strong>
+                <span>selected trades</span>
+              </div>
+              <div>
+                <strong>{pendingRestoreScoped.dailyJournals.length}</strong>
+                <span>selected daily journals</span>
+              </div>
+              <div>
+                <strong>{pendingRestoreScoped.attachmentReferences}</strong>
+                <span>selected attachments</span>
+              </div>
+            </div>
+
+            <p className="data-menu-note restore-selected-range">
+              Selected range: {pendingRestoreRange.label}
+            </p>
+
+            <div className="import-review-actions">
+              <button
+                className="utility-button"
+                disabled={isSaving}
+                type="button"
+                onClick={() => setPendingRestore(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button compact"
+                disabled={isSaving || (!pendingRestoreScoped.trades.length && !pendingRestoreScoped.dailyJournals.length)}
+                type="button"
+                onClick={() => void confirmRestoreBackup()}
+              >
+                {restoreActionLabel}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {pendingImport ? (
         <div
           className="modal-backdrop"
@@ -4473,6 +6699,11 @@ export default function Home() {
               {pendingImport.duplicateMatches.length} row
               {pendingImport.duplicateMatches.length === 1 ? "" : "s"} from {pendingImport.sourceName} look
               identical to trades already in the website.
+              {pendingImport.dailyJournals.length
+                ? ` ${pendingImport.dailyJournals.length} daily journal${
+                    pendingImport.dailyJournals.length === 1 ? "" : "s"
+                  } will be imported if the date is empty.`
+                : ""}
             </p>
 
             <div className="import-review-stats">
@@ -4521,7 +6752,7 @@ export default function Home() {
                 disabled={isSaving}
                 type="button"
                 onClick={() =>
-                  void importTrades(pendingImport.readyTrades, pendingImport.skippedById)
+                  void importTrades(pendingImport.readyTrades, pendingImport.skippedById, pendingImport.dailyJournals)
                 }
               >
                 Skip duplicates
@@ -4534,6 +6765,7 @@ export default function Home() {
                   void importTrades(
                     [...pendingImport.readyTrades, ...pendingImport.duplicateMatches],
                     pendingImport.skippedById,
+                    pendingImport.dailyJournals,
                   )
                 }
               >
