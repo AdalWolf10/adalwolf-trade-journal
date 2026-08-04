@@ -1872,13 +1872,14 @@ textarea:focus {
 .rule-note {
   border: 1px solid rgba(120, 169, 255, 0.25);
   background: var(--blue-soft);
-  color: #c9d9ff;
+  color: color-mix(in srgb, var(--blue) 58%, var(--foreground));
 }
 
 .notice {
   border: 1px solid rgba(246, 200, 95, 0.28);
   background: var(--amber-soft);
-  color: #ffe1a0;
+  color: color-mix(in srgb, var(--amber) 46%, var(--foreground));
+  font-weight: 720;
 }
 
 .dashboard-notice {
@@ -3773,6 +3774,76 @@ textarea:focus {
 
 .notion-block p {
   color: var(--foreground);
+}
+
+.notion-modal {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.day-detail-section {
+  border-color: var(--line);
+  background: var(--panel-strong);
+}
+
+.day-trade-row {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.trade-card-button:hover,
+.trade-card-button:focus-visible {
+  border-color: color-mix(in srgb, var(--blue) 46%, var(--line));
+  background:
+    linear-gradient(135deg, var(--blue-soft), transparent 58%),
+    var(--panel);
+}
+
+.journal-property-strip span,
+.daily-journal-meta span,
+.tag-chip {
+  border-color: var(--line);
+  background: var(--panel-soft);
+  color: var(--muted-strong);
+}
+
+.narrative-detail-row,
+.narrative-free-line {
+  border-bottom-color: var(--line);
+}
+
+.narrative-free-line {
+  color: var(--foreground);
+}
+
+.narrative-trade-header {
+  border-color: var(--line);
+}
+
+.narrative-trade-header span {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--muted-strong);
+}
+
+.narrative-trade-header.positive {
+  border-color: color-mix(in srgb, var(--green) 44%, var(--line));
+  background: linear-gradient(135deg, var(--green-soft), var(--panel-strong));
+}
+
+.narrative-trade-header.negative {
+  border-color: color-mix(in srgb, var(--red) 46%, var(--line));
+  background: linear-gradient(135deg, var(--red-soft), var(--panel-strong));
+}
+
+.narrative-trade-header.neutral {
+  border-color: color-mix(in srgb, var(--amber) 42%, var(--line));
+  background: linear-gradient(135deg, var(--amber-soft), var(--panel-strong));
+}
+
+.media-block {
+  background:
+    linear-gradient(135deg, var(--green-soft), transparent 48%),
+    var(--panel-strong);
 }
 
 .expanded-textarea {
