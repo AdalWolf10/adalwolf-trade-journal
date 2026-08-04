@@ -265,6 +265,55 @@ type AttachmentSource = {
   sourceType: "Daily Journal" | "Trade";
   date: string;
 };
+type AiAnalysisContext = {
+  filters: JournalFilters;
+  logSearch: string;
+};
+type TradeQualityRow = {
+  average: number;
+  avgMax: number;
+  beRate: number;
+  captureRate: number;
+  journalDays?: number;
+  label: string;
+  profitFactor: number;
+  score: number;
+  total: number;
+  trades: number;
+  winRate: number;
+  wins: number;
+};
+type DisciplineRow = {
+  label: string;
+  no: number;
+  rate: number;
+  total: number;
+  unknown: number;
+  yes: number;
+};
+type EmotionRow = {
+  average: number;
+  count: number;
+  label: string;
+  total: number;
+  trades: number;
+  winRate: number;
+};
+type NoteKeywordRow = {
+  count: number;
+  keyword: string;
+};
+type TradeQualityAnalysis = {
+  discipline: DisciplineRow[];
+  emotions: EmotionRow[];
+  noteKeywords: NoteKeywordRow[];
+  paRatings: TradeQualityRow[];
+  sessions: TradeQualityRow[];
+  setupRatings: TradeQualityRow[];
+  setupSessions: TradeQualityRow[];
+  setups: TradeQualityRow[];
+  tags: TradeQualityRow[];
+};
 
 const reportOptions: Array<{ label: string; mode: ReportMode }> = [
   { label: "Selected Month", mode: "month" },
@@ -308,6 +357,53 @@ const breakevenFilterOptions: Array<{ label: string; value: BreakevenFilter }> =
 const backupReminderStorageKey = "adalwolf_last_backup_exported_at";
 const backupReminderDismissedStorageKey = "adalwolf_backup_reminder_dismissed_at";
 const backupReminderIntervalMs = 7 * 24 * 60 * 60 * 1000;
+const disciplinePrompts = [
+  { label: "Valid setup", prompt: "Valid setup" },
+  { label: "Followed risk", prompt: "Followed risk" },
+  { label: "Entry rule", prompt: "Followed entry rule" },
+  { label: "Exit rule", prompt: "Followed exit rule" },
+];
+const noteKeywordStopWords = new Set([
+  "about",
+  "after",
+  "again",
+  "also",
+  "because",
+  "before",
+  "both",
+  "could",
+  "didn",
+  "didnt",
+  "entry",
+  "from",
+  "good",
+  "have",
+  "into",
+  "just",
+  "like",
+  "long",
+  "made",
+  "more",
+  "much",
+  "need",
+  "only",
+  "price",
+  "really",
+  "short",
+  "should",
+  "setup",
+  "that",
+  "then",
+  "there",
+  "this",
+  "trade",
+  "trades",
+  "very",
+  "were",
+  "what",
+  "when",
+  "with",
+]);
 
 const directionOptions = ["", "Long", "Short"] as const;
 const sessionOptions = ["", "Asia", "London", "NY AM", "NY PM"] as const;
@@ -662,6 +758,16 @@ function toneClass(value: number) {
   return "neutral";
 }
 
+function narrativeBlocks(narrative: string) {
+  return narrative.trim()
+    ? narrative
+        .trim()
+        .split(/\n\s*\n/)
+        .map((block) => block.split("\n").map((line) => line.trimEnd()).filter(Boolean))
+        .filter((block) => block.length)
+    : [];
+}
+
 function narrativeDetail(line: string) {
   const labels = [
     "Valid setup?",
@@ -688,13 +794,7 @@ function narrativeTradeFromHeader(header: string, trades: ExitTrade[], fallbackI
 }
 
 function renderNarrativeContent(narrative: string, trades: ExitTrade[]) {
-  const blocks = narrative.trim()
-    ? narrative
-        .trim()
-        .split(/\n\s*\n/)
-        .map((block) => block.split("\n").map((line) => line.trimEnd()).filter(Boolean))
-        .filter((block) => block.length)
-    : [];
+  const blocks = narrativeBlocks(narrative);
 
   if (!blocks.length) {
     return <p>--</p>;
@@ -1034,6 +1134,297 @@ function strategySummary(trades: ExitTrade[]) {
   });
 }
 
+function qualityScore(summary: ReturnType<typeof tradeStatsForExport>) {
+  const expectancyScore = clamp((summary.avgR + 0.6) * 58, 0, 100);
+  const captureScore = clamp(summary.captureRate, 0, 100);
+  const profitScore = clamp(summary.profitFactor === Infinity ? 100 : summary.profitFactor * 36, 0, 100);
+  const sampleScore = clamp(summary.trades * 9, 18, 100);
+
+  return clamp(
+    expectancyScore * 0.36 +
+      summary.winRate * 0.22 +
+      captureScore * 0.18 +
+      profitScore * 0.16 +
+      sampleScore * 0.08,
+    0,
+    100,
+  );
+}
+
+function tradeQualityRow(label: string, trades: ExitTrade[], journalDays?: number): TradeQualityRow {
+  const summary = tradeStatsForExport(trades);
+  return {
+    average: summary.avgR,
+    avgMax: summary.trades ? summary.totalMax / summary.trades : 0,
+    beRate: summary.beRate,
+    captureRate: summary.captureRate,
+    journalDays,
+    label,
+    profitFactor: summary.profitFactor,
+    score: qualityScore(summary),
+    total: summary.netR,
+    trades: summary.trades,
+    winRate: summary.winRate,
+    wins: summary.wins,
+  };
+}
+
+function qualityRowsFromGroups(groups: Map<string, ExitTrade[]>) {
+  return [...groups.entries()]
+    .map(([label, rows]) => tradeQualityRow(label, rows))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.total - left.total ||
+        right.trades - left.trades ||
+        left.label.localeCompare(right.label),
+    );
+}
+
+function tradeQualityRows(
+  trades: ExitTrade[],
+  groupValue: (trade: ExitTrade) => string,
+  fallback: string,
+) {
+  const groups = new Map<string, ExitTrade[]>();
+  trades.forEach((trade) => {
+    const key = groupValue(trade).trim() || fallback;
+    groups.set(key, [...(groups.get(key) ?? []), trade]);
+  });
+  return qualityRowsFromGroups(groups);
+}
+
+function sortedTradesByDateMap(trades: ExitTrade[]) {
+  const map = new Map<string, ExitTrade[]>();
+  trades.forEach((trade) => {
+    map.set(trade.date, [...(map.get(trade.date) ?? []), trade]);
+  });
+  map.forEach((rows, date) => {
+    map.set(date, [...rows].sort(compareTradeEntryOrder));
+  });
+  return map;
+}
+
+function paRatingBucket(rating: number) {
+  if (rating >= 8) {
+    return "8-10";
+  }
+  if (rating >= 5) {
+    return "5-6.5";
+  }
+  return "0-4.5";
+}
+
+function paRatingQualityRows(trades: ExitTrade[], journals: DailyJournal[]) {
+  const tradesByDate = sortedTradesByDateMap(trades);
+  const groups = new Map<string, { days: number; trades: ExitTrade[] }>(
+    ["8-10", "5-6.5", "0-4.5"].map((label) => [label, { days: 0, trades: [] }]),
+  );
+
+  journals.forEach((journal) => {
+    const key = paRatingBucket(journal.priceActionRating);
+    const current = groups.get(key) ?? { days: 0, trades: [] };
+    current.days += 1;
+    current.trades.push(...(tradesByDate.get(journal.date) ?? []));
+    groups.set(key, current);
+  });
+
+  return [...groups.entries()].map(([label, value]) => tradeQualityRow(label, value.trades, value.days));
+}
+
+function normalizeNarrativeAnswer(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (/^(yes|y|true|followed|valid)\b/.test(normalized)) {
+    return "yes";
+  }
+  if (/^(no|n|false|missed|broke|invalid)\b/.test(normalized)) {
+    return "no";
+  }
+  return "unknown";
+}
+
+function parseSetupRating(value: string) {
+  const match = value.match(/(\d+(?:\.\d+)?)\s*(?:\/\s*10)?/);
+  if (!match) {
+    return null;
+  }
+
+  const rating = Number(match[1]);
+  return Number.isFinite(rating) ? clamp(rating, 0, 10) : null;
+}
+
+function setupRatingBucket(rating: number) {
+  if (rating >= 8) {
+    return "8-10 premium";
+  }
+  if (rating >= 5) {
+    return "5-6.5 workable";
+  }
+  return "0-4.5 low quality";
+}
+
+function narrativeQualityAnalysis(trades: ExitTrade[], journals: DailyJournal[]) {
+  const tradesByDate = sortedTradesByDateMap(trades);
+  const discipline = new Map(
+    disciplinePrompts.map((item) => [
+      item.label,
+      {
+        label: item.label,
+        no: 0,
+        total: 0,
+        unknown: 0,
+        yes: 0,
+      },
+    ]),
+  );
+  const emotions = new Map<string, { count: number; trades: ExitTrade[] }>();
+  const setupRatings = new Map<string, ExitTrade[]>();
+
+  journals.forEach((journal) => {
+    const dayTrades = tradesByDate.get(journal.date) ?? [];
+    narrativeBlocks(journal.narrative).forEach((block, blockIndex) => {
+      const [header, ...details] = block;
+      const trade = narrativeTradeFromHeader(header ?? "", dayTrades, blockIndex);
+
+      details.forEach((line) => {
+        const parsed = narrativeDetail(line);
+        if (!parsed) {
+          return;
+        }
+
+        const prompt = disciplinePrompts.find((item) => item.label === parsed.label);
+        if (prompt) {
+          const current = discipline.get(prompt.label);
+          const answer = normalizeNarrativeAnswer(parsed.value);
+          if (current) {
+            current.total += 1;
+            if (answer === "yes") {
+              current.yes += 1;
+            } else if (answer === "no") {
+              current.no += 1;
+            } else {
+              current.unknown += 1;
+            }
+          }
+        }
+
+        if (parsed.label === "Main emotion") {
+          const emotion = parsed.value.trim() || "Unspecified";
+          const current = emotions.get(emotion) ?? { count: 0, trades: [] };
+          current.count += 1;
+          if (trade) {
+            current.trades.push(trade);
+          }
+          emotions.set(emotion, current);
+        }
+
+        if (parsed.label === "Setup Rating") {
+          const rating = parseSetupRating(parsed.value);
+          if (rating !== null) {
+            const bucket = setupRatingBucket(rating);
+            setupRatings.set(bucket, [...(setupRatings.get(bucket) ?? []), ...(trade ? [trade] : [])]);
+          }
+        }
+      });
+    });
+  });
+
+  return {
+    discipline: [...discipline.values()].map((row) => ({
+      ...row,
+      rate: row.yes + row.no ? (row.yes / (row.yes + row.no)) * 100 : 0,
+    })),
+    emotions: [...emotions.entries()]
+      .map(([label, value]) => {
+        const summary = tradeStatsForExport(value.trades);
+        return {
+          average: summary.avgR,
+          count: value.count,
+          label,
+          total: summary.netR,
+          trades: summary.trades,
+          winRate: summary.winRate,
+        };
+      })
+      .sort((left, right) => right.count - left.count || right.total - left.total || left.label.localeCompare(right.label)),
+    setupRatings: qualityRowsFromGroups(setupRatings),
+  };
+}
+
+function tagQualityRows(trades: ExitTrade[], journals: DailyJournal[]) {
+  const groups = new Map<string, { journalDays: number; trades: ExitTrade[] }>();
+  trades.forEach((trade) => {
+    tagList(trade).forEach((tag) => {
+      const current = groups.get(tag) ?? { journalDays: 0, trades: [] };
+      current.trades.push(trade);
+      groups.set(tag, current);
+    });
+  });
+  journals.forEach((journal) => {
+    tagList(journal).forEach((tag) => {
+      const current = groups.get(tag) ?? { journalDays: 0, trades: [] };
+      current.journalDays += 1;
+      groups.set(tag, current);
+    });
+  });
+
+  return [...groups.entries()]
+    .map(([label, value]) => tradeQualityRow(label, value.trades, value.journalDays))
+    .sort(
+      (left, right) =>
+        right.total - left.total ||
+        right.score - left.score ||
+        (right.trades + (right.journalDays ?? 0)) - (left.trades + (left.journalDays ?? 0)) ||
+        left.label.localeCompare(right.label),
+    );
+}
+
+function noteKeywordRows(trades: ExitTrade[], journals: DailyJournal[]) {
+  const counts = new Map<string, number>();
+  const text = [
+    ...trades.flatMap((trade) => [trade.notes, trade.tags, trade.exitType]),
+    ...journals.flatMap((journal) => [
+      journal.htfBias,
+      journal.orm,
+      journal.narrative,
+      journal.reviewNotes,
+      journal.tags,
+    ]),
+  ].join(" ");
+
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.replace(/^-+|-+$/g, ""))
+    .filter((word) => word.length >= 4 && !noteKeywordStopWords.has(word))
+    .forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
+
+  return [...counts.entries()]
+    .map(([keyword, count]) => ({ count, keyword }))
+    .sort((left, right) => right.count - left.count || left.keyword.localeCompare(right.keyword))
+    .slice(0, 16);
+}
+
+function tradeQualityAnalysis(trades: ExitTrade[], journals: DailyJournal[]): TradeQualityAnalysis {
+  const narrative = narrativeQualityAnalysis(trades, journals);
+  return {
+    discipline: narrative.discipline,
+    emotions: narrative.emotions,
+    noteKeywords: noteKeywordRows(trades, journals),
+    paRatings: paRatingQualityRows(trades, journals),
+    sessions: tradeQualityRows(trades, (trade) => trade.session, "No session"),
+    setupRatings: narrative.setupRatings,
+    setupSessions: tradeQualityRows(
+      trades,
+      (trade) => `${trade.setupName || "No setup"} · ${trade.session || "No session"}`,
+      "No setup · No session",
+    ),
+    setups: tradeQualityRows(trades, (trade) => trade.setupName, "No setup"),
+    tags: tagQualityRows(trades, journals),
+  };
+}
+
 function exitComparisonSheetRows(trades: ExitTrade[]): SheetCell[][] {
   const rows = strategySummary(trades);
   const actualTotal = rows.find((row) => row.key === "actual")?.total ?? 0;
@@ -1146,6 +1537,117 @@ function tagSheetRows(trades: ExitTrade[], journals: DailyJournal[]): SheetCell[
   ];
 }
 
+function qualityRowSheetRows(label: string, rows: TradeQualityRow[]): SheetCell[][] {
+  return [
+    [
+      label,
+      "Quality Score",
+      "Trades",
+      "Journal Days",
+      "Net R",
+      "Average R",
+      "Win Rate",
+      "Capture Rate",
+      "Profit Factor",
+      "BE Hit Rate",
+      "Avg Max R",
+    ],
+    ...rows.map((row) => [
+      row.label,
+      row.score,
+      row.trades,
+      row.journalDays ?? "",
+      row.total,
+      row.average,
+      `${row.winRate.toFixed(1)}%`,
+      `${row.captureRate.toFixed(1)}%`,
+      ratio(row.profitFactor),
+      `${row.beRate.toFixed(1)}%`,
+      row.avgMax,
+    ]),
+  ];
+}
+
+function disciplineSheetRows(rows: DisciplineRow[]): SheetCell[][] {
+  return [
+    ["Discipline Item", "Followed Rate", "Yes", "No", "Unknown", "Total Answers"],
+    ...rows.map((row) => [
+      row.label,
+      `${row.rate.toFixed(1)}%`,
+      row.yes,
+      row.no,
+      row.unknown,
+      row.total,
+    ]),
+  ];
+}
+
+function emotionSheetRows(rows: EmotionRow[]): SheetCell[][] {
+  return [
+    ["Emotion", "Occurrences", "Linked Trades", "Net R", "Average R", "Win Rate"],
+    ...rows.map((row) => [
+      row.label,
+      row.count,
+      row.trades,
+      row.total,
+      row.average,
+      `${row.winRate.toFixed(1)}%`,
+    ]),
+  ];
+}
+
+function noteKeywordSheetRows(rows: NoteKeywordRow[]): SheetCell[][] {
+  return [
+    ["Keyword", "Count"],
+    ...rows.map((row) => [row.keyword, row.count]),
+  ];
+}
+
+function qualitySummarySheetRows(analysis: TradeQualityAnalysis): SheetCell[][] {
+  const bestSetup = analysis.setups[0];
+  const weakestSetup = [...analysis.setups].filter((row) => row.trades).sort((left, right) => left.score - right.score)[0];
+  const bestSession = analysis.sessions[0];
+  const weakestDiscipline = [...analysis.discipline]
+    .filter((row) => row.total)
+    .sort((left, right) => left.rate - right.rate)[0];
+  const topEmotion = analysis.emotions[0];
+  const topTag = analysis.tags[0];
+
+  return [
+    ["Signal", "Value", "Detail"],
+    [
+      "Best Setup",
+      bestSetup?.label ?? "",
+      bestSetup ? `${bestSetup.score.toFixed(1)} score · ${bestSetup.total.toFixed(2)}R` : "",
+    ],
+    [
+      "Weakest Setup",
+      weakestSetup?.label ?? "",
+      weakestSetup ? `${weakestSetup.score.toFixed(1)} score · ${weakestSetup.total.toFixed(2)}R` : "",
+    ],
+    [
+      "Best Session",
+      bestSession?.label ?? "",
+      bestSession ? `${bestSession.score.toFixed(1)} score · ${bestSession.total.toFixed(2)}R` : "",
+    ],
+    [
+      "Lowest Discipline Follow-through",
+      weakestDiscipline?.label ?? "",
+      weakestDiscipline ? `${weakestDiscipline.rate.toFixed(1)}% followed` : "",
+    ],
+    [
+      "Most Frequent Emotion",
+      topEmotion?.label ?? "",
+      topEmotion ? `${topEmotion.count} occurrences · ${topEmotion.total.toFixed(2)}R linked` : "",
+    ],
+    [
+      "Strongest Tag",
+      topTag?.label ?? "",
+      topTag ? `${topTag.total.toFixed(2)}R · ${topTag.trades} trades` : "",
+    ],
+  ];
+}
+
 function collectAttachmentSources(trades: ExitTrade[], journals: DailyJournal[]) {
   const tradeSources = trades.flatMap((trade, tradeIndex) =>
     trade.attachments.map((attachment, attachmentIndex) => ({
@@ -1248,6 +1750,14 @@ function readmeSheetRows(): SheetCell[][] {
     ["By Weekday", "Calculated performance grouped by weekday."],
     ["Exit Ranking", "Ranks actual exits against alternate exit methods."],
     ["Tags", "Tag frequency and R performance."],
+    ["Quality Summary", "Best and weakest trade quality signals from setup, session, tags, discipline, and emotion data."],
+    ["Setup Quality", "Setup quality score, expectancy, win rate, capture rate, and BE hit rate."],
+    ["Session Quality", "Session quality score, expectancy, win rate, capture rate, and BE hit rate."],
+    ["Setup Session Quality", "Setup and session combinations ranked by trade quality."],
+    ["PA Rating Edge", "Price-action rating buckets linked to trade results."],
+    ["Discipline", "Yes/no discipline follow-through parsed from Daily Journal narrative templates."],
+    ["Emotion", "Main emotion frequency parsed from Daily Journal narrative templates."],
+    ["Note Keywords", "Common words from notes, journal narratives, ORM, HTF bias, and tags."],
     ["Attachments Index", "Screenshot/file references. Images are referenced, not embedded in the workbook."],
   ];
 }
@@ -1260,6 +1770,7 @@ function completeWorkbookSheets(
 ): WorkbookSheet[] {
   const sortedTrades = [...trades].sort((left, right) => left.date.localeCompare(right.date) || compareTradeEntryOrder(left, right));
   const sortedJournals = [...journals].sort((left, right) => left.date.localeCompare(right.date));
+  const quality = tradeQualityAnalysis(sortedTrades, sortedJournals);
   return [
     { name: "README", rows: readmeSheetRows() },
     { name: "Trades", rows: tradeSheetRows(sortedTrades) },
@@ -1271,6 +1782,14 @@ function completeWorkbookSheets(
     { name: "By Weekday", rows: weekdaySheetRows(sortedTrades) },
     { name: "Exit Ranking", rows: exitComparisonSheetRows(sortedTrades) },
     { name: "Tags", rows: tagSheetRows(sortedTrades, sortedJournals) },
+    { name: "Quality Summary", rows: qualitySummarySheetRows(quality) },
+    { name: "Setup Quality", rows: qualityRowSheetRows("Setup", quality.setups) },
+    { name: "Session Quality", rows: qualityRowSheetRows("Session", quality.sessions) },
+    { name: "Setup Session Quality", rows: qualityRowSheetRows("Setup Session", quality.setupSessions) },
+    { name: "PA Rating Edge", rows: qualityRowSheetRows("PA Rating", quality.paRatings) },
+    { name: "Discipline", rows: disciplineSheetRows(quality.discipline) },
+    { name: "Emotion", rows: emotionSheetRows(quality.emotions) },
+    { name: "Note Keywords", rows: noteKeywordSheetRows(quality.noteKeywords) },
     { name: "Attachments Index", rows: attachmentIndexSheetRows(attachmentSources) },
   ];
 }
@@ -2138,14 +2657,22 @@ function aiAnalysisMarkdown(
   journals: DailyJournal[],
   range: ActiveReportRange,
   sources: AttachmentSource[],
+  context?: AiAnalysisContext,
 ) {
   const summary = tradeStatsForExport(trades);
-  const bestSetups = groupedTradeSheetRows(trades, "Setup Name", (trade) => trade.setupName)
-    .slice(1, 6)
-    .map((row) => `- ${row[0]}: ${Number(row[2]).toFixed(2)}R over ${row[1]} trades`);
-  const bestSessions = groupedTradeSheetRows(trades, "Session", (trade) => trade.session)
-    .slice(1, 6)
-    .map((row) => `- ${row[0]}: ${Number(row[2]).toFixed(2)}R over ${row[1]} trades`);
+  const quality = tradeQualityAnalysis(trades, journals);
+  const activeFilters = context
+    ? [
+        context.filters.session ? `Session=${context.filters.session}` : "",
+        context.filters.setup ? `Setup=${context.filters.setup}` : "",
+        context.filters.tag ? `Tag=${context.filters.tag}` : "",
+        context.filters.result !== "all" ? `Result=${context.filters.result}` : "",
+        context.filters.beHit !== "all" ? `BE=${context.filters.beHit}` : "",
+        context.filters.paRating !== "all" ? `PA=${context.filters.paRating}` : "",
+        context.filters.breakeven !== "all" ? `BE trades=${context.filters.breakeven}` : "",
+        context.logSearch.trim() ? `Search=${context.logSearch.trim()}` : "",
+      ].filter(Boolean)
+    : [];
 
   return [
     "# AI Trading Journal Analysis Packet",
@@ -2156,6 +2683,7 @@ function aiAnalysisMarkdown(
     "- Journal type: R-based futures trading journal",
     "- Main goal: improve patience, discipline, execution, and exit quality",
     `- Export range: ${range.label}`,
+    `- Active filters: ${activeFilters.length ? activeFilters.join(", ") : "None"}`,
     "",
     "## Summary",
     `- Trades: ${summary.trades}`,
@@ -2166,11 +2694,40 @@ function aiAnalysisMarkdown(
     `- Profit factor: ${ratio(summary.profitFactor)}`,
     `- Attachments/screenshots referenced: ${sources.length}`,
     "",
-    "## Best Setups By Net R",
-    bestSetups.length ? bestSetups.join("\n") : "- No setup data available.",
+    "## Setup Quality",
+    qualityRowsMarkdown(quality.setups),
     "",
-    "## Best Sessions By Net R",
-    bestSessions.length ? bestSessions.join("\n") : "- No session data available.",
+    "## Session Quality",
+    qualityRowsMarkdown(quality.sessions),
+    "",
+    "## Discipline Follow-through",
+    quality.discipline.length
+      ? quality.discipline
+          .map((row) => `- ${row.label}: ${row.rate.toFixed(1)}% followed (${row.yes} yes, ${row.no} no)`)
+          .join("\n")
+      : "- No discipline data found in Daily Journal narratives.",
+    "",
+    "## Emotion Pattern",
+    quality.emotions.length
+      ? quality.emotions
+          .slice(0, 6)
+          .map((row) => `- ${row.label}: ${row.count} occurrences, ${row.total.toFixed(2)}R linked`)
+          .join("\n")
+      : "- No emotion data found in Daily Journal narratives.",
+    "",
+    "## Notes & Tags",
+    quality.tags.length
+      ? quality.tags
+          .slice(0, 8)
+          .map((row) => `- #${row.label}: ${row.total.toFixed(2)}R over ${row.trades} trades`)
+          .join("\n")
+      : "- No tag data available.",
+    quality.noteKeywords.length
+      ? `Common note words: ${quality.noteKeywords
+          .slice(0, 12)
+          .map((row) => `${row.keyword} (${row.count})`)
+          .join(", ")}`
+      : "Common note words: none found.",
     "",
     "## Suggested AI Review Questions",
     "- What patterns do you see in my losing trades?",
@@ -2180,8 +2737,181 @@ function aiAnalysisMarkdown(
     "- What do my daily narratives suggest about psychology and execution?",
     "",
     "## Screenshot Notes",
-    "Screenshots are included in the ZIP `attachments/` folder when they could be downloaded. See `backup.json` or the workbook `Attachments Index` sheet for exact file mapping.",
+    "Screenshots are included in the ZIP `attachments/` folder when they could be downloaded. See the JSON file or the workbook `Attachments Index` sheet for exact file mapping.",
   ].join("\n");
+}
+
+function qualityRowsMarkdown(rows: TradeQualityRow[]) {
+  return rows.length
+    ? rows
+        .slice(0, 6)
+        .map(
+          (row) =>
+            `- ${row.label}: ${row.score.toFixed(1)} quality, ${row.total.toFixed(2)}R, ${row.trades} trades, ${row.winRate.toFixed(1)}% win`,
+        )
+        .join("\n")
+    : "- No data available.";
+}
+
+function aiReviewPromptMarkdown(range: ActiveReportRange) {
+  return [
+    "# AI Review Prompt",
+    "",
+    "You are reviewing my R-based trading journal. Use the JSON, workbook, markdown summary, and screenshots in this ZIP.",
+    "",
+    `Focus range: ${range.label}`,
+    "",
+    "Please analyze:",
+    "- Best and worst setup quality.",
+    "- Best and worst session quality.",
+    "- Whether my actual exits are weaker than fixed exit alternatives.",
+    "- Discipline problems from Valid setup, risk, entry rule, and exit rule answers.",
+    "- Emotion patterns and whether certain emotions correlate with bad trades.",
+    "- Price action rating versus outcome.",
+    "- Repeated tags, note keywords, and narrative themes.",
+    "- Screenshots that look especially important based on the trade and journal context.",
+    "",
+    "Give me a direct trader-style review with priorities, not generic motivation.",
+  ].join("\n");
+}
+
+function screenshotIndexMarkdown(sources: AttachmentSource[]) {
+  return [
+    "# Screenshot Index",
+    "",
+    "| Date | Source | Filename | ZIP Path | Original URL |",
+    "| --- | --- | --- | --- | --- |",
+    ...sources.map((source) =>
+      [
+        source.date,
+        `${source.sourceType}: ${source.sourceLabel}`,
+        source.attachment.filename,
+        source.backupPath ?? "",
+        source.attachment.url,
+      ]
+        .map((value) => String(value).replace(/\|/g, "\\|"))
+        .join(" | "),
+    ).map((row) => `| ${row} |`),
+  ].join("\n");
+}
+
+function serializableQualityRows(rows: TradeQualityRow[]) {
+  return rows.map((row) => ({
+    ...row,
+    profitFactor: row.profitFactor === Infinity ? "Infinity" : row.profitFactor,
+  }));
+}
+
+function serializableTradeStats(summary: ReturnType<typeof tradeStatsForExport>) {
+  return {
+    ...summary,
+    profitFactor: summary.profitFactor === Infinity ? "Infinity" : summary.profitFactor,
+  };
+}
+
+function aiAnalysisData(
+  trades: ExitTrade[],
+  journals: DailyJournal[],
+  range: ActiveReportRange,
+  sources: AttachmentSource[],
+  context?: AiAnalysisContext,
+) {
+  const quality = tradeQualityAnalysis(trades, journals);
+  return {
+    app: "Adalwolf Trade Journal",
+    exportedAt: new Date().toISOString(),
+    format: "adalwolf-ai-analysis-packet",
+    purpose: "Read-only AI review of trade execution, exits, setup quality, psychology, notes, tags, and screenshots.",
+    range,
+    context: context
+      ? {
+          filters: context.filters,
+          logSearch: context.logSearch,
+        }
+      : undefined,
+    summary: serializableTradeStats(tradeStatsForExport(trades)),
+    quality: {
+      discipline: quality.discipline,
+      emotions: quality.emotions,
+      noteKeywords: quality.noteKeywords,
+      paRatings: serializableQualityRows(quality.paRatings),
+      sessions: serializableQualityRows(quality.sessions),
+      setupRatings: serializableQualityRows(quality.setupRatings),
+      setupSessions: serializableQualityRows(quality.setupSessions),
+      setups: serializableQualityRows(quality.setups),
+      tags: serializableQualityRows(quality.tags),
+    },
+    data: {
+      dailyJournals: journals,
+      trades,
+    },
+    screenshotIndex: sources.map((source) => ({
+      backupPath: source.backupPath,
+      contentType: source.attachment.contentType,
+      date: source.date,
+      filename: source.attachment.filename,
+      id: source.attachment.id,
+      size: source.attachment.size,
+      sourceId: source.sourceId,
+      sourceLabel: source.sourceLabel,
+      sourceType: source.sourceType,
+      uploadedAt: source.attachment.uploadedAt,
+      url: source.attachment.url,
+    })),
+  };
+}
+
+async function createAiAnalysisZip(
+  trades: ExitTrade[],
+  journals: DailyJournal[],
+  range: ActiveReportRange,
+  context?: AiAnalysisContext,
+) {
+  const sources = assignBackupPaths(collectAttachmentSources(trades, journals));
+  const skippedAttachments: Array<{
+    error: string;
+    filename: string;
+    sourceId: string;
+    sourceType: AttachmentSource["sourceType"];
+    url: string;
+  }> = [];
+  const files: Record<string, ZipFileBody> = {};
+
+  for (const source of sources) {
+    try {
+      const response = await fetch(source.attachment.url, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      files[source.backupPath as string] = await response.arrayBuffer();
+    } catch (error) {
+      skippedAttachments.push({
+        error: error instanceof Error ? error.message : "Unable to download attachment",
+        filename: source.attachment.filename,
+        sourceId: source.sourceId,
+        sourceType: source.sourceType,
+        url: source.attachment.url,
+      });
+    }
+  }
+
+  files["AI_REVIEW_PROMPT.md"] = aiReviewPromptMarkdown(range);
+  files["ai-analysis.md"] = aiAnalysisMarkdown(trades, journals, range, sources, context);
+  files["ai-analysis.json"] = JSON.stringify(aiAnalysisData(trades, journals, range, sources, context), null, 2);
+  files["ai-analysis-workbook.xlsx"] = await createWorkbookXlsx(
+    completeWorkbookSheets(trades, journals, range, sources),
+  ).arrayBuffer();
+  files["screenshot-index.md"] = screenshotIndexMarkdown(sources);
+
+  if (skippedAttachments.length) {
+    files["attachment-download-warnings.json"] = JSON.stringify(skippedAttachments, null, 2);
+  }
+
+  return {
+    attachmentCount: sources.length - skippedAttachments.length,
+    blob: createStoredZip(files, zipMime),
+    skippedCount: skippedAttachments.length,
+  };
 }
 
 async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]) {
@@ -3189,119 +3919,6 @@ export default function Home() {
   );
 
   const bestWeekday = weekdayRows.find((row) => row.trades > 0);
-  const setupSessionRows = useMemo(() => {
-    const groups = new Map<string, ExitTrade[]>();
-    filteredReportTrades.forEach((trade) => {
-      const key = `${trade.setupName || "No setup"} · ${trade.session || "No session"}`;
-      groups.set(key, [...(groups.get(key) ?? []), trade]);
-    });
-
-    return [...groups.entries()]
-      .map(([label, rows]) => {
-        const summary = tradeStatsForExport(rows);
-        return {
-          average: summary.avgR,
-          label,
-          total: summary.netR,
-          trades: summary.trades,
-          winRate: summary.winRate,
-        };
-      })
-      .sort((left, right) => right.total - left.total || right.winRate - left.winRate || left.label.localeCompare(right.label))
-      .slice(0, 5);
-  }, [filteredReportTrades]);
-
-  const tagInsightRows = useMemo(() => {
-    const groups = new Map<string, { journals: number; trades: ExitTrade[] }>();
-    filteredReportTrades.forEach((trade) => {
-      tagList(trade).forEach((tag) => {
-        const current = groups.get(tag) ?? { journals: 0, trades: [] };
-        current.trades.push(trade);
-        groups.set(tag, current);
-      });
-    });
-    filteredReportDailyJournals.forEach((journal) => {
-      tagList(journal).forEach((tag) => {
-        const current = groups.get(tag) ?? { journals: 0, trades: [] };
-        current.journals += 1;
-        groups.set(tag, current);
-      });
-    });
-
-    return [...groups.entries()]
-      .map(([tag, value]) => {
-        const summary = tradeStatsForExport(value.trades);
-        return {
-          journals: value.journals,
-          tag,
-          total: summary.netR,
-          trades: summary.trades,
-          winRate: summary.winRate,
-        };
-      })
-      .sort(
-        (left, right) =>
-          right.total - left.total ||
-          right.trades + right.journals - (left.trades + left.journals) ||
-          left.tag.localeCompare(right.tag),
-      )
-      .slice(0, 6);
-  }, [filteredReportDailyJournals, filteredReportTrades]);
-
-  const tradesByFilteredDate = useMemo(() => {
-    const map = new Map<string, ExitTrade[]>();
-    filteredReportTrades.forEach((trade) => {
-      map.set(trade.date, [...(map.get(trade.date) ?? []), trade]);
-    });
-    return map;
-  }, [filteredReportTrades]);
-
-  const paRatingRows = useMemo(() => {
-    const groups = new Map<string, ExitTrade[]>();
-    filteredReportDailyJournals.forEach((journal) => {
-      const label =
-        journal.priceActionRating >= 8
-          ? "8-10"
-          : journal.priceActionRating >= 5
-            ? "5-6.5"
-            : "0-4.5";
-      groups.set(label, [...(groups.get(label) ?? []), ...(tradesByFilteredDate.get(journal.date) ?? [])]);
-    });
-
-    return ["8-10", "5-6.5", "0-4.5"].map((label) => {
-      const rows = groups.get(label) ?? [];
-      const summary = tradeStatsForExport(rows);
-      return {
-        label,
-        total: summary.netR,
-        trades: summary.trades,
-        winRate: summary.winRate,
-      };
-    });
-  }, [filteredReportDailyJournals, tradesByFilteredDate]);
-
-  const breakevenDayRows = useMemo(() => {
-    const groups = new Map<string, { days: number; trades: ExitTrade[] }>();
-    filteredReportDailyJournals.forEach((journal) => {
-      const label = journal.breakevenTrades >= 2 ? "2+ BE" : journal.breakevenTrades === 1 ? "1 BE" : "0 BE";
-      const current = groups.get(label) ?? { days: 0, trades: [] };
-      current.days += 1;
-      current.trades.push(...(tradesByFilteredDate.get(journal.date) ?? []));
-      groups.set(label, current);
-    });
-
-    return ["0 BE", "1 BE", "2+ BE"].map((label) => {
-      const value = groups.get(label) ?? { days: 0, trades: [] };
-      const summary = tradeStatsForExport(value.trades);
-      return {
-        days: value.days,
-        label,
-        total: summary.netR,
-        trades: summary.trades,
-        winRate: summary.winRate,
-      };
-    });
-  }, [filteredReportDailyJournals, tradesByFilteredDate]);
 
   const monthlyStats = useMemo(() => {
     const totalActual = filteredMonthlyTrades.reduce((sum, trade) => sum + trade.actualR, 0);
@@ -4235,7 +4852,7 @@ export default function Home() {
     }
   }
 
-  async function exportJournal(format: "backup" | "json" | "xlsx") {
+  async function exportJournal(format: "ai" | "backup" | "json" | "xlsx") {
     setIsDataMenuOpen(false);
 
     if (format === "backup") {
@@ -4252,6 +4869,28 @@ export default function Home() {
         );
       } catch (error) {
         setNotice(error instanceof Error ? error.message : "Unable to export full backup");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
+    if (format === "ai") {
+      setIsSaving(true);
+      setNotice("Preparing AI analysis packet...");
+      try {
+        const packet = await createAiAnalysisZip(sortedReportTrades, filteredReportDailyJournals, reportRange, {
+          filters,
+          logSearch,
+        });
+        downloadBlob(`${exportBaseName}-ai-analysis.zip`, packet.blob);
+        setNotice(
+          `AI analysis packet exported with ${packet.attachmentCount} screenshot${
+            packet.attachmentCount === 1 ? "" : "s"
+          }.${packet.skippedCount ? ` ${packet.skippedCount} screenshot warning${packet.skippedCount === 1 ? "" : "s"}.` : ""}`,
+        );
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Unable to export AI analysis packet");
       } finally {
         setIsSaving(false);
       }
@@ -5149,6 +5788,10 @@ export default function Home() {
             <span aria-hidden="true">A</span>
             <strong>Analytics</strong>
           </a>
+          <a href="/journal/quality" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">Q</span>
+            <strong>Quality</strong>
+          </a>
           <a href="/journal/device-files" onClick={() => setIsMobileNavOpen(false)}>
             <span aria-hidden="true">F</span>
             <strong>Device Files</strong>
@@ -5238,6 +5881,15 @@ export default function Home() {
                   <small className="data-menu-note">{reportRange.label}</small>
                   <button className="data-menu-item" type="button" role="menuitem" onClick={() => void exportJournal("xlsx")}>
                     Excel Workbook
+                  </button>
+                  <button
+                    className="data-menu-item"
+                    disabled={isSaving}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void exportJournal("ai")}
+                  >
+                    AI Analysis Packet
                   </button>
                   <button className="data-menu-item" type="button" role="menuitem" onClick={() => void exportJournal("json")}>
                     JSON
@@ -5891,104 +6543,6 @@ export default function Home() {
                     <strong className={toneClass(row.total)}>
                       {row.trades ? rValue(row.total) : "--"}
                     </strong>
-                    <small>{row.trades ? `${percent(row.winRate)} win` : "--"}</small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="review-panel insight-panel">
-            <div className="panel-heading compact">
-              <div>
-                <p className="eyebrow">Setup Analysis</p>
-                <h2>Setup x Session</h2>
-              </div>
-              <span className="status-pill">{setupSessionRows[0]?.label.split(" · ")[0] ?? "--"}</span>
-            </div>
-            <div className="insight-list">
-              {setupSessionRows.map((row, index) => (
-                <div className="insight-row" key={row.label}>
-                  <span className="rank-badge">#{index + 1}</span>
-                  <div>
-                    <strong>{row.label}</strong>
-                    <small>
-                      {row.trades} trades · avg {rValue(row.average)}
-                    </small>
-                  </div>
-                  <div className="insight-result">
-                    <strong className={toneClass(row.total)}>{rValue(row.total)}</strong>
-                    <small>{percent(row.winRate)} win</small>
-                  </div>
-                </div>
-              ))}
-              {!setupSessionRows.length ? <p className="empty-panel-note">No setup data in this view.</p> : null}
-            </div>
-          </article>
-
-          <article className="review-panel insight-panel">
-            <div className="panel-heading compact">
-              <div>
-                <p className="eyebrow">Tag Analysis</p>
-                <h2>Tag Signals</h2>
-              </div>
-              <span className="status-pill">{tagInsightRows[0]?.tag ?? "--"}</span>
-            </div>
-            <div className="tag-signal-grid">
-              {tagInsightRows.map((row) => (
-                <div className="tag-signal-card" key={row.tag}>
-                  <strong>#{row.tag}</strong>
-                  <span className={toneClass(row.total)}>{rValue(row.total)}</span>
-                  <small>
-                    {row.trades} trades · {row.journals} journal days · {percent(row.winRate)} win
-                  </small>
-                </div>
-              ))}
-              {!tagInsightRows.length ? <p className="empty-panel-note">No tags in this view.</p> : null}
-            </div>
-          </article>
-
-          <article className="review-panel insight-panel">
-            <div className="panel-heading compact">
-              <div>
-                <p className="eyebrow">Daily Review</p>
-                <h2>PA Rating Edge</h2>
-              </div>
-            </div>
-            <div className="insight-list">
-              {paRatingRows.map((row) => (
-                <div className="insight-row" key={row.label}>
-                  <span className="rank-badge">{row.label}</span>
-                  <div>
-                    <strong>Price action {row.label}</strong>
-                    <small>{row.trades ? `${row.trades} linked trades` : "No linked trades"}</small>
-                  </div>
-                  <div className="insight-result">
-                    <strong className={toneClass(row.total)}>{row.trades ? rValue(row.total) : "--"}</strong>
-                    <small>{row.trades ? `${percent(row.winRate)} win` : "--"}</small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="review-panel insight-panel">
-            <div className="panel-heading compact">
-              <div>
-                <p className="eyebrow">Daily Review</p>
-                <h2>BE Day Outcome</h2>
-              </div>
-            </div>
-            <div className="insight-list">
-              {breakevenDayRows.map((row) => (
-                <div className="insight-row" key={row.label}>
-                  <span className="rank-badge">{row.label}</span>
-                  <div>
-                    <strong>{row.days} day{row.days === 1 ? "" : "s"}</strong>
-                    <small>{row.trades ? `${row.trades} linked trades` : "No linked trades"}</small>
-                  </div>
-                  <div className="insight-result">
-                    <strong className={toneClass(row.total)}>{row.trades ? rValue(row.total) : "--"}</strong>
                     <small>{row.trades ? `${percent(row.winRate)} win` : "--"}</small>
                   </div>
                 </div>

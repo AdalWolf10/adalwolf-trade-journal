@@ -75,6 +75,10 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /Data <span/);
   assert.match(source, /data-menu-panel/);
   assert.match(source, /Export Current View/);
+  assert.match(source, /AI Analysis Packet/);
+  assert.match(source, /AI_REVIEW_PROMPT\.md/);
+  assert.match(source, /ai-analysis\.json/);
+  assert.match(source, /tradeQualityAnalysis/);
   assert.match(source, /Excel Template/);
   assert.match(source, /Import JSON or Excel/);
   assert.match(source, /parseXlsxTrades/);
@@ -155,6 +159,8 @@ test("wires the hosted exit journal data model", async () => {
     journalAttachmentRoute,
     devicePage,
     deviceClient,
+    qualityPage,
+    qualityClient,
     deviceHelpers,
     worker,
     wrangler,
@@ -183,6 +189,8 @@ test("wires the hosted exit journal data model", async () => {
       readFile(new URL("../app/api/journal-attachments/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/device-files/page.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/device-files/DeviceFilesClient.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/journal/quality/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/journal/quality/QualityPageClient.tsx", import.meta.url), "utf8"),
       readFile(new URL("../lib/device-files.ts", import.meta.url), "utf8"),
       readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
       readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
@@ -206,6 +214,7 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journal, /device-menu-section/);
   assert.match(journal, /Open Device Files/);
   assert.match(journal, /\/journal\/device-files/);
+  assert.match(journal, /\/journal\/quality/);
   assert.match(journal, /body: file/);
   assert.match(journal, /"x-device-file-size"/);
   assert.match(journal, /type DeviceSafety/);
@@ -252,6 +261,28 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(deviceClient, /device-safety-panel/);
   assert.match(deviceClient, /device-storage-meter/);
   assert.match(deviceClient, /multiple type="file"/);
+  assert.match(qualityPage, /isAuthenticated/);
+  assert.match(qualityPage, /redirect\("\/"\)/);
+  assert.match(qualityPage, /QualityPageClient/);
+  assert.match(qualityClient, /Trade Quality/);
+  assert.match(qualityClient, /quality-month-switcher/);
+  assert.match(qualityClient, /selectedMonthTabRef/);
+  assert.match(qualityClient, /This month/);
+  assert.match(qualityClient, /quality-standalone-grid/);
+  assert.match(qualityClient, /quality-arranged-grid/);
+  assert.match(qualityClient, /Setup Quality/);
+  assert.match(qualityClient, /Setup Analysis/);
+  assert.match(qualityClient, /Tag Analysis/);
+  assert.match(qualityClient, /PA Rating Edge/);
+  assert.match(qualityClient, /BE Day Outcome/);
+  assert.match(qualityClient, /Discipline Pattern/);
+  assert.match(qualityClient, /\/api\/trades/);
+  assert.match(qualityClient, /\/api\/daily-journals/);
+  assert.doesNotMatch(journal, /quality-dashboard-panel/);
+  assert.doesNotMatch(journal, /<p className="eyebrow">Setup Analysis<\/p>/);
+  assert.doesNotMatch(journal, /<p className="eyebrow">Tag Analysis<\/p>/);
+  assert.doesNotMatch(journal, /<h2>PA Rating Edge<\/h2>/);
+  assert.doesNotMatch(journal, /<h2>BE Day Outcome<\/h2>/);
   assert.match(deviceClient, /onDrop/);
   assert.match(deviceClient, /body: file/);
   assert.match(deviceClient, /action: "set-enabled"/);
