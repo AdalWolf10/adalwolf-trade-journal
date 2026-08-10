@@ -2441,23 +2441,28 @@ textarea:focus {
 
 .narrative-render {
   display: grid;
-  gap: 10px;
+  overflow: hidden;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
 }
 
 .narrative-trade-card {
   overflow: hidden;
-  border: 1px solid rgba(50, 56, 68, 0.72);
-  border-radius: 8px;
-  background: rgba(12, 14, 19, 0.72);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .narrative-text-block {
   display: grid;
-  gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--panel);
+  gap: 8px;
   padding: 12px;
+}
+
+.narrative-render > * + * {
+  border-top: 1px solid var(--line);
 }
 
 .narrative-text-block p {
@@ -4292,12 +4297,12 @@ textarea:focus {
 }
 
 .narrative-trade-card {
-  border-color: var(--line);
-  background: var(--panel);
+  border-color: transparent;
+  background: transparent;
 }
 
 .narrative-trade-header {
-  border-radius: var(--radius-sm);
+  border-radius: 0;
 }
 
 .narrative-detail-row {
