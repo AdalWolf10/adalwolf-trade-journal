@@ -455,8 +455,8 @@ h2 {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #0d0f13;
-  color: #cbd4e6;
+  background: var(--panel-strong);
+  color: var(--muted-strong);
   font-size: 0.72rem;
   line-height: 34px;
   padding: 0 9px;
@@ -471,9 +471,9 @@ h2 {
 
 .device-menu-file-row,
 .device-menu-empty {
-  border: 1px solid rgba(42, 47, 58, 0.92);
+  border: 1px solid var(--line);
   border-radius: 7px;
-  background: #111318;
+  background: var(--panel-strong);
 }
 
 .device-menu-file-row {
@@ -500,7 +500,7 @@ h2 {
   display: block;
   max-width: 100%;
   overflow: hidden;
-  color: #cbd4e6;
+  color: var(--muted-strong);
   font-size: 0.7rem;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -677,7 +677,7 @@ h2 {
   display: block;
   max-width: min(620px, 72vw);
   overflow: hidden;
-  color: #cbd4e6;
+  color: var(--muted-strong);
   font-size: 0.82rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -817,7 +817,7 @@ h2 {
   display: block;
   max-width: 310px;
   overflow: hidden;
-  color: #cbd4e6;
+  color: var(--muted-strong);
   font-size: 0.76rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2638,9 +2638,9 @@ textarea:focus {
 
 .expanded-textarea {
   min-height: min(62vh, 560px);
-  border-color: rgba(63, 69, 84, 0.9);
-  background: #0c0e12;
-  color: #f2f4f9;
+  border-color: var(--line-strong);
+  background: var(--input-bg);
+  color: var(--foreground);
   font-size: 0.98rem;
   line-height: 1.7;
   padding: 16px;
@@ -4274,6 +4274,7 @@ textarea:focus {
 .formula-preview span {
   border-color: var(--line);
   background: var(--panel);
+  color: var(--muted-strong);
 }
 
 .attachment-gallery {
@@ -4429,6 +4430,7 @@ textarea:focus {
 
 .expanded-textarea {
   background: var(--input-bg);
+  color: var(--foreground);
 }
 
 .image-preview-stage {

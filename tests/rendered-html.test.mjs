@@ -152,6 +152,30 @@ test("defines the exit strategy journal shell", async () => {
   );
 });
 
+test("keeps expanded writing editor theme-safe", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const expandedRules = [...css.matchAll(/\.expanded-textarea\s*\{(?<body>[^}]+)\}/g)]
+    .map((match) => match.groups?.body ?? "")
+    .join("\n");
+  const deviceLinkRules = [
+    ...css.matchAll(/\.(?:device-menu-link|device-menu-file-link|device-page-code code|device-file-table code)\s*\{(?<body>[^}]+)\}/g),
+  ]
+    .map((match) => match.groups?.body ?? "")
+    .join("\n");
+  const formulaPreviewRules = [...css.matchAll(/\.formula-preview span\s*\{(?<body>[^}]+)\}/g)]
+    .map((match) => match.groups?.body ?? "")
+    .join("\n");
+
+  assert.match(expandedRules, /background:\s*var\(--input-bg\)/);
+  assert.match(expandedRules, /color:\s*var\(--foreground\)/);
+  assert.match(expandedRules, /border-color:\s*var\(--line-strong\)/);
+  assert.doesNotMatch(expandedRules, /color:\s*#f2f4f9/i);
+  assert.doesNotMatch(expandedRules, /background:\s*#0c0e12/i);
+  assert.match(deviceLinkRules, /color:\s*var\(--muted-strong\)/);
+  assert.doesNotMatch(deviceLinkRules, /color:\s*#cbd4e6/i);
+  assert.match(formulaPreviewRules, /color:\s*var\(--muted-strong\)/);
+});
+
 test("wires the hosted exit journal data model", async () => {
   const [
     journal,
