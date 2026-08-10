@@ -1158,6 +1158,9 @@ export default function QualityPageClient() {
           <button className="utility-button" type="button" aria-label="Toggle color theme" onClick={toggleTheme}>
             {theme === "dark" ? "Light" : "Dark"}
           </button>
+          <a className="utility-button" href="/journal/home">
+            Home
+          </a>
           <a className="utility-button" href="/journal">
             Journal
           </a>

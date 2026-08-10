@@ -20,6 +20,14 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /Profit Factor/);
   assert.match(source, /Journal Score/);
   assert.match(source, /Journal score breakdown/);
+  assert.match(source, /Private Home/);
+  assert.match(source, /Command Center/);
+  assert.match(source, /home-tile-grid/);
+  assert.match(source, /Copy Last/);
+  assert.match(source, /quickTradeTemplates/);
+  assert.match(source, /trade-template-strip/);
+  assert.match(source, /tag-picker-strip/);
+  assert.match(source, /duplicateTrade/);
   assert.match(source, /BE Hit\?/);
   assert.match(source, /First TP R/);
   assert.match(source, /Max R/);
@@ -40,6 +48,8 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /alignedNarrativeLine/);
   assert.match(source, /tradeNarrativeTemplate/);
   assert.match(source, /renderNarrativeContent/);
+  assert.match(source, /isNarrativeTradeHeader/);
+  assert.match(source, /narrative-text-block/);
   assert.match(source, /narrative-trade-header/);
   assert.match(source, /Add Template/);
   assert.match(source, /Refresh Template/);
@@ -146,6 +156,7 @@ test("wires the hosted exit journal data model", async () => {
   const [
     journal,
     pageRoute,
+    homeRoute,
     auth,
     login,
     passwordRoute,
@@ -176,6 +187,7 @@ test("wires the hosted exit journal data model", async () => {
     await Promise.all([
       readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/journal/home/page.tsx", import.meta.url), "utf8"),
       readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/auth/login/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/auth/password/route.ts", import.meta.url), "utf8"),
@@ -215,6 +227,12 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journal, /Open Device Files/);
   assert.match(journal, /\/journal\/device-files/);
   assert.match(journal, /\/journal\/quality/);
+  assert.match(journal, /\/journal\/home/);
+  assert.match(journal, /initialView = "dashboard"/);
+  assert.match(journal, /JournalShellView = "dashboard" \| "home"/);
+  assert.match(journal, /homeTiles/);
+  assert.match(journal, /copyLastTradeSetup/);
+  assert.match(journal, /toggleDraftTag/);
   assert.match(journal, /body: file/);
   assert.match(journal, /"x-device-file-size"/);
   assert.match(journal, /type DeviceSafety/);
@@ -238,6 +256,8 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journal, /alignedNarrativeLine/);
   assert.match(journal, /tradeNarrativeTemplate/);
   assert.match(journal, /renderNarrativeContent/);
+  assert.match(journal, /isNarrativeTradeHeader/);
+  assert.match(journal, /Trade #\$\{index \+ 1\}/);
   assert.match(journal, /narrativeTradeFromHeader/);
   assert.match(journal, /applyNarrativeTemplate/);
   assert.match(journal, /document\.addEventListener\("paste"/);
@@ -298,6 +318,10 @@ test("wires the hosted exit journal data model", async () => {
   assert.doesNotMatch(journal, /localStorage|sessionStorage/);
   assert.match(pageRoute, /isAuthenticated/);
   assert.match(pageRoute, /redirect\("\/"\)/);
+  assert.match(homeRoute, /isAuthenticated/);
+  assert.match(homeRoute, /redirect\("\/"\)/);
+  assert.match(homeRoute, /initialView="home"/);
+  assert.match(homeRoute, /title: "Private Home"/);
   assert.match(auth, /JOURNAL_USERNAME/);
   assert.match(auth, /SESSION_SECRET/);
   assert.match(auth, /JOURNAL_PASSWORD_HASH/);

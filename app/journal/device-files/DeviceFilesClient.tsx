@@ -321,6 +321,9 @@ export default function DeviceFilesClient() {
           >
             {theme === "dark" ? "Light" : "Dark"}
           </button>
+          <a className="utility-button" href="/journal/home">
+            Home
+          </a>
           <a className="utility-button" href="/journal">
             Journal
           </a>

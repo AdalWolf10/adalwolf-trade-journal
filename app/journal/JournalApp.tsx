@@ -208,6 +208,7 @@ type TradeSort = {
 type ResultFilter = "all" | "win" | "loss" | "flat";
 type DailyRatingFilter = "all" | "low" | "mid" | "high";
 type BreakevenFilter = "all" | "none" | "one-plus" | "two-plus";
+type JournalShellView = "dashboard" | "home";
 
 type JournalFilters = {
   beHit: "all" | BeHit;
@@ -264,6 +265,15 @@ type AttachmentSource = {
   sourceLabel: string;
   sourceType: "Daily Journal" | "Trade";
   date: string;
+};
+type HomeTile = {
+  action: string;
+  button?: () => void;
+  disabled?: boolean;
+  href?: string;
+  label: string;
+  meta: string;
+  title: string;
 };
 type AiAnalysisContext = {
   filters: JournalFilters;
@@ -353,6 +363,48 @@ const breakevenFilterOptions: Array<{ label: string; value: BreakevenFilter }> =
   { label: "0 BE trades", value: "none" },
   { label: "1+ BE trades", value: "one-plus" },
   { label: "2+ BE trades", value: "two-plus" },
+];
+const builtInTradeTags = [
+  "good execution",
+  "early exit",
+  "discipline",
+  "patience",
+  "trend day",
+  "choppy PA",
+  "liquidity sweep",
+  "gap fill",
+  "review",
+];
+const quickTradeTemplates: Array<{
+  label: string;
+  note: string;
+  patch: Partial<DraftTrade>;
+  tags: string[];
+}> = [
+  {
+    label: "TI Long",
+    note: "NY AM continuation",
+    patch: { direction: "Long", firstTpR: 1, maxR: 2, session: "NY AM", setupName: "TI Entry" },
+    tags: ["TI Entry", "NY AM"],
+  },
+  {
+    label: "LSI Short",
+    note: "Liquidity sweep",
+    patch: { direction: "Short", firstTpR: 1, maxR: 2, session: "NY AM", setupName: "LSI Entry" },
+    tags: ["LSI Entry", "liquidity sweep"],
+  },
+  {
+    label: "RCC",
+    note: "Reclaim model",
+    patch: { firstTpR: 1, maxR: 2, session: "NY PM", setupName: "RCC Entry" },
+    tags: ["RCC Entry", "NY PM"],
+  },
+  {
+    label: "BE Loss",
+    note: "BE not hit",
+    patch: { actualR: -1, beHit: "No", firstTpR: 1, maxR: 0 },
+    tags: ["risk", "review"],
+  },
 ];
 const backupReminderStorageKey = "adalwolf_last_backup_exported_at";
 const backupReminderDismissedStorageKey = "adalwolf_backup_reminder_dismissed_at";
@@ -520,6 +572,34 @@ function defaultDailyJournal(date = currentDateKey()): DraftDailyJournal {
     reviewNotes: "",
     tags: "",
   };
+}
+
+function draftFromTrade(trade: ExitTrade, overrides: Partial<DraftTrade> = {}): DraftTrade {
+  return {
+    actualR: trade.actualR,
+    attachments: trade.attachments,
+    beHit: trade.beHit,
+    date: trade.date,
+    direction: trade.direction,
+    exitType: trade.exitType,
+    firstTpR: trade.firstTpR,
+    instrument: trade.instrument,
+    lessonLearned: trade.lessonLearned,
+    maxR: trade.maxR,
+    mistakeCategory: trade.mistakeCategory,
+    mistakeNotes: trade.mistakeNotes,
+    notes: trade.notes,
+    session: trade.session,
+    setupName: trade.setupName,
+    tags: trade.tags,
+    ...overrides,
+  };
+}
+
+function mergeTagText(currentValue: string, nextTags: string[]) {
+  return [...new Set([...tagList({ tags: currentValue }), ...nextTags].map((tag) => tag.trim()).filter(Boolean))].join(
+    ", ",
+  );
 }
 
 function emptyPasswordDraft(): PasswordDraft {
@@ -793,6 +873,10 @@ function narrativeTradeFromHeader(header: string, trades: ExitTrade[], fallbackI
   return trades[Number.isFinite(tradeIndex) && tradeIndex > 0 ? tradeIndex - 1 : fallbackIndex] ?? null;
 }
 
+function isNarrativeTradeHeader(header: string) {
+  return /^.+\s+Trade:\s+.+\s+\(Trade #\d+\)\s*-{3,}\s*\(.+\)\s*$/.test(header.trim());
+}
+
 function renderNarrativeContent(narrative: string, trades: ExitTrade[]) {
   const blocks = narrativeBlocks(narrative);
 
@@ -804,6 +888,18 @@ function renderNarrativeContent(narrative: string, trades: ExitTrade[]) {
     <div className="narrative-render">
       {blocks.map((block, blockIndex) => {
         const [header, ...details] = block;
+        const isTradeBlock = isNarrativeTradeHeader(header);
+
+        if (!isTradeBlock) {
+          return (
+            <div className="narrative-text-block" key={`${header}-${blockIndex}`}>
+              {block.map((line, lineIndex) => (
+                <p key={`${line}-${lineIndex}`}>{line}</p>
+              ))}
+            </div>
+          );
+        }
+
         const trade = narrativeTradeFromHeader(header, trades, blockIndex);
         const tone = trade ? toneClass(trade.actualR) : "neutral";
 
@@ -1284,6 +1380,10 @@ function narrativeQualityAnalysis(trades: ExitTrade[], journals: DailyJournal[])
     const dayTrades = tradesByDate.get(journal.date) ?? [];
     narrativeBlocks(journal.narrative).forEach((block, blockIndex) => {
       const [header, ...details] = block;
+      if (!header || !isNarrativeTradeHeader(header)) {
+        return;
+      }
+
       const trade = narrativeTradeFromHeader(header ?? "", dayTrades, blockIndex);
 
       details.forEach((line) => {
@@ -3389,7 +3489,7 @@ function scopedRestoreData(pendingRestore: PendingRestore, range: ActiveReportRa
   };
 }
 
-export default function Home() {
+export default function Home({ initialView = "dashboard" }: { initialView?: JournalShellView }) {
   const [trades, setTrades] = useState<ExitTrade[]>([]);
   const [draft, setDraft] = useState<DraftTrade>(() => defaultDraft());
   const [dailyJournals, setDailyJournals] = useState<DailyJournal[]>([]);
@@ -4036,6 +4136,73 @@ export default function Home() {
       })
     : "Never";
   const selectedMonthLabel = monthLabel(selectedMonth);
+  const isHomeView = initialView === "home";
+  const latestTrade = sortedTrades[0] ?? null;
+  const latestTradeLabel = latestTrade
+    ? `${latestTrade.date} · ${[latestTrade.session, latestTrade.direction, latestTrade.setupName]
+        .filter(Boolean)
+        .join(" · ")}`
+    : "No trades yet";
+  const recentTradeTags = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    trades.forEach((trade) => {
+      tagList(trade).forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1));
+    });
+    dailyJournals.forEach((journal) => {
+      tagList(journal).forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1));
+    });
+
+    const rankedTags = [...counts.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([tag]) => tag);
+
+    return [...new Set([...builtInTradeTags, ...rankedTags])].slice(0, 16);
+  }, [dailyJournals, trades]);
+  const homeTiles: HomeTile[] = [
+    {
+      action: "Open",
+      href: "/journal",
+      label: "R Journal",
+      meta: `${stats.trades} trades · ${rValue(stats.totalActual)}`,
+      title: "Execution Journal",
+    },
+    {
+      action: "Soon",
+      disabled: true,
+      label: "Money Journal",
+      meta: "Broker imports",
+      title: "Money Journal",
+    },
+    {
+      action: "Open",
+      href: "/journal/quality",
+      label: "Quality",
+      meta: `${stats.score.toFixed(1)} score`,
+      title: "Trade Quality",
+    },
+    {
+      action: "Open",
+      href: "/journal/device-files",
+      label: "Files",
+      meta: deviceStorageLabel || `${deviceFiles.length} files`,
+      title: "Device Files",
+    },
+    {
+      action: isSaving ? "Exporting" : "Export",
+      button: () => void exportJournal("backup"),
+      label: "Backup",
+      meta: `Last: ${lastBackupLabel}`,
+      title: "Safety ZIP",
+    },
+    {
+      action: "Open",
+      button: openSecurityDialog,
+      label: "Security",
+      meta: "Password",
+      title: "Settings",
+    },
+  ];
 
   function goToMonth(key: string) {
     setSelectedMonth(key);
@@ -4100,6 +4267,45 @@ export default function Home() {
     });
   }
 
+  function applyTradeTemplate(template: (typeof quickTradeTemplates)[number]) {
+    setDraft((current) => {
+      const next = {
+        ...current,
+        ...template.patch,
+        tags: mergeTagText(current.tags, template.tags),
+      };
+      return next.beHit === "No" ? { ...next, actualR: -1 } : next;
+    });
+  }
+
+  function toggleDraftTag(tag: string) {
+    setDraft((current) => {
+      const currentTags = tagList(current);
+      const hasTag = currentTags.some((item) => item.toLowerCase() === tag.toLowerCase());
+      const nextTags = hasTag
+        ? currentTags.filter((item) => item.toLowerCase() !== tag.toLowerCase())
+        : [...currentTags, tag];
+      return { ...current, tags: nextTags.join(", ") };
+    });
+  }
+
+  function copyLastTradeSetup() {
+    if (!latestTrade) {
+      setNotice("No previous trade to copy yet.");
+      return;
+    }
+
+    setDraft((current) =>
+      draftFromTrade(latestTrade, {
+        actualR: 0,
+        attachments: [],
+        beHit: "Yes",
+        date: current.date,
+        notes: "",
+      }),
+    );
+  }
+
   function updateDailyDraft<K extends keyof DraftDailyJournal>(
     field: K,
     value: DraftDailyJournal[K],
@@ -4147,6 +4353,15 @@ export default function Home() {
       resetForm();
     }
     setIsEntryOpen(true);
+  }
+
+  function duplicateTrade(trade: ExitTrade) {
+    setEditingId(null);
+    setDraft(draftFromTrade(trade, { attachments: [] }));
+    setSelectedMonth(monthKey(trade.date));
+    setSelectedTradeDetailId(null);
+    setIsEntryOpen(true);
+    setNotice("Trade copied as a new draft.");
   }
 
   function closeEntryDialog() {
@@ -4320,24 +4535,7 @@ export default function Home() {
 
   function editTrade(trade: ExitTrade) {
     setEditingId(trade.id);
-    setDraft({
-      actualR: trade.actualR,
-      attachments: trade.attachments,
-      beHit: trade.beHit,
-      date: trade.date,
-      direction: trade.direction,
-      exitType: trade.exitType,
-      firstTpR: trade.firstTpR,
-      instrument: trade.instrument,
-      lessonLearned: trade.lessonLearned,
-      maxR: trade.maxR,
-      mistakeCategory: trade.mistakeCategory,
-      mistakeNotes: trade.mistakeNotes,
-      notes: trade.notes,
-      session: trade.session,
-      setupName: trade.setupName,
-      tags: trade.tags,
-    });
+    setDraft(draftFromTrade(trade));
     setSelectedMonth(monthKey(trade.date));
     setIsEntryOpen(true);
   }
@@ -5333,11 +5531,32 @@ export default function Home() {
       <section className="form-section">
         <div className="form-section-heading">
           <span>Core</span>
+          <div className="entry-form-actions">
+            <button className="table-action" disabled={!latestTrade || Boolean(editingId)} type="button" onClick={copyLastTradeSetup}>
+              Copy Last
+            </button>
+          </div>
         </div>
+        {!editingId ? (
+          <div className="trade-template-strip" aria-label="Quick trade templates">
+            {quickTradeTemplates.map((template) => (
+              <button
+                className="template-chip"
+                key={template.label}
+                type="button"
+                onClick={() => applyTradeTemplate(template)}
+              >
+                <strong>{template.label}</strong>
+                <small>{template.note}</small>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="field-row compact-fields">
           <label>
             Date
             <input
+              autoFocus={!editingId}
               className="date-picker-input"
               type="date"
               value={draft.date}
@@ -5461,6 +5680,21 @@ export default function Home() {
             value={draft.tags}
             onChange={(event) => updateDraft("tags", event.target.value)}
           />
+          <div className="tag-picker-strip" aria-label="Quick trade tags">
+            {recentTradeTags.map((tag) => {
+              const isActive = tagList(draft).some((item) => item.toLowerCase() === tag.toLowerCase());
+              return (
+                <button
+                  className={`tag-picker-chip ${isActive ? "active" : ""}`}
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleDraftTag(tag)}
+                >
+                  {tag}
+                </button>
+              );
+            })}
+          </div>
         </label>
       </section>
 
@@ -5772,19 +6006,23 @@ export default function Home() {
         </button>
 
         <nav className="sidebar-nav" aria-label="Primary sections">
-          <a className="active" href="#dashboard-overview" onClick={() => setIsMobileNavOpen(false)}>
+          <a className={isHomeView ? "active" : ""} href="/journal/home" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">H</span>
+            <strong>Home</strong>
+          </a>
+          <a className={isHomeView ? "" : "active"} href="/journal#dashboard-overview" onClick={() => setIsMobileNavOpen(false)}>
             <span aria-hidden="true">D</span>
             <strong>Dashboard</strong>
           </a>
-          <a href="#calendar" onClick={() => setIsMobileNavOpen(false)}>
+          <a href="/journal#calendar" onClick={() => setIsMobileNavOpen(false)}>
             <span aria-hidden="true">C</span>
             <strong>Calendar</strong>
           </a>
-          <a href="#trades" onClick={() => setIsMobileNavOpen(false)}>
+          <a href="/journal#trades" onClick={() => setIsMobileNavOpen(false)}>
             <span aria-hidden="true">T</span>
             <strong>Trade Log</strong>
           </a>
-          <a href="#analytics" onClick={() => setIsMobileNavOpen(false)}>
+          <a href="/journal#analytics" onClick={() => setIsMobileNavOpen(false)}>
             <span aria-hidden="true">A</span>
             <strong>Analytics</strong>
           </a>
@@ -5837,8 +6075,8 @@ export default function Home() {
               Menu
             </button>
             <div>
-              <p className="eyebrow">R Journal</p>
-              <h1>Trading Dashboard</h1>
+              <p className="eyebrow">{isHomeView ? "Private Dashboard" : "R Journal"}</p>
+              <h1>{isHomeView ? "Private Home" : "Trading Dashboard"}</h1>
               <p className="dashboard-motto">{'"PATIENCE | DISCIPLINE | EXECUTION"'}</p>
             </div>
           </div>
@@ -6024,6 +6262,136 @@ export default function Home() {
           </div>
         </header>
 
+      {isHomeView ? (
+        <section className="private-home-page" aria-label="Private journal home">
+          <section className="private-home-hero">
+            <div className="private-home-copy">
+              <p className="eyebrow">Command Center</p>
+              <h2>Welcome back, Adalwolf.</h2>
+              <p className="home-lede">Clean review, fast logging, safe backups.</p>
+              <div className="home-hero-actions">
+                <button className="primary-button compact" type="button" onClick={openNewTrade}>
+                  New Trade
+                </button>
+                <a className="utility-button compact" href="/journal">
+                  Open R Journal
+                </a>
+                <button className="utility-button compact" disabled={isSaving} type="button" onClick={() => void exportJournal("backup")}>
+                  Backup Now
+                </button>
+              </div>
+            </div>
+            <div className="home-focus-card">
+              <span>Current View</span>
+              <strong className={toneClass(stats.totalActual)}>{rValue(stats.totalActual)}</strong>
+              <small>
+                {stats.trades} trades · {percent(stats.winRate)} win · {stats.score.toFixed(1)} score
+              </small>
+              <div className="home-focus-track" aria-hidden="true">
+                <span style={{ width: `${clamp(stats.score, 4, 100)}%` }} />
+              </div>
+            </div>
+          </section>
+
+          <section className="home-stat-grid" aria-label="Journal snapshot">
+            <article>
+              <span>Trades</span>
+              <strong>{stats.trades}</strong>
+              <small>{reportRange.label}</small>
+            </article>
+            <article>
+              <span>Win Rate</span>
+              <strong>{percent(stats.winRate)}</strong>
+              <small>{stats.wins} wins</small>
+            </article>
+            <article>
+              <span>Capture</span>
+              <strong className={toneClass(stats.captureRate)}>{percent(stats.captureRate)}</strong>
+              <small>Avg Max {rValue(stats.avgMax)}</small>
+            </article>
+            <article>
+              <span>Backup</span>
+              <strong>{lastBackupLabel}</strong>
+              <small>{backupReminderDue ? "Due now" : "Ready"}</small>
+            </article>
+          </section>
+
+          <section className="home-tile-grid" aria-label="Private pages">
+            {homeTiles.map((tile) => {
+              const content = (
+                <>
+                  <span>{tile.label}</span>
+                  <strong>{tile.title}</strong>
+                  <small>{tile.meta}</small>
+                  <em>{tile.action}</em>
+                </>
+              );
+
+              return tile.href ? (
+                <a className={`home-tile ${tile.disabled ? "disabled" : ""}`} href={tile.href} key={tile.label}>
+                  {content}
+                </a>
+              ) : (
+                <button
+                  className={`home-tile ${tile.disabled ? "disabled" : ""}`}
+                  disabled={tile.disabled || (tile.label === "Backup" && isSaving)}
+                  key={tile.label}
+                  type="button"
+                  onClick={tile.button}
+                >
+                  {content}
+                </button>
+              );
+            })}
+          </section>
+
+          <section className="home-lower-grid" aria-label="Recent journal activity">
+            <article className="home-panel">
+              <div className="panel-heading compact">
+                <div>
+                  <p className="eyebrow">Recent</p>
+                  <h2>Latest Trades</h2>
+                </div>
+                <span className="status-pill">{latestTrade ? rValue(latestTrade.actualR) : "--"}</span>
+              </div>
+              <div className="home-recent-list">
+                {sortedTrades.slice(0, 5).map((trade) => (
+                  <button className="home-recent-row" key={trade.id} type="button" onClick={() => openTradeDetail(trade.id)}>
+                    <span>{trade.date}</span>
+                    <strong>
+                      {[trade.session, trade.direction, trade.setupName].filter(Boolean).join(" · ") || "Trade"}
+                    </strong>
+                    <em className={toneClass(trade.actualR)}>{rValue(trade.actualR)}</em>
+                  </button>
+                ))}
+                {!sortedTrades.length ? <p className="empty-panel-note">No trades logged yet.</p> : null}
+              </div>
+            </article>
+
+            <article className="home-panel home-today-panel">
+              <div className="panel-heading compact">
+                <div>
+                  <p className="eyebrow">Today</p>
+                  <h2>{currentDateKey()}</h2>
+                </div>
+                <span className="status-pill">{latestTradeLabel}</span>
+              </div>
+              <div className="home-action-stack">
+                <button className="secondary-button" type="button" onClick={() => openNewTradeForDay(currentDateKey())}>
+                  Log Today
+                </button>
+                <button className="secondary-button" type="button" onClick={() => openDayDetail(currentDateKey())}>
+                  Daily Page
+                </button>
+                <a className="secondary-button" href="/journal/quality">
+                  Quality Review
+                </a>
+              </div>
+            </article>
+          </section>
+        </section>
+      ) : (
+        <>
       <section className="month-switcher" aria-label="Month navigation">
         <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
           &lt;
@@ -6432,6 +6800,16 @@ export default function Home() {
                                 Edit
                               </button>
                               <button
+                                className="table-action"
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  duplicateTrade(trade);
+                                }}
+                              >
+                                Copy
+                              </button>
+                              <button
                                 className="table-action danger"
                                 type="button"
                                 onClick={(event) => {
@@ -6566,6 +6944,8 @@ export default function Home() {
 
         </aside>
       </section>
+      </>
+      )}
 
       {isDayDetailOpen ? (
         <div
@@ -6655,6 +7035,16 @@ export default function Home() {
                             }}
                           >
                             Edit
+                          </button>
+                          <button
+                            className="table-action"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              duplicateTrade(trade);
+                            }}
+                          >
+                            Copy
                           </button>
                           <button
                             className="table-action danger"
@@ -6802,6 +7192,13 @@ export default function Home() {
                   }}
                 >
                   Edit
+                </button>
+                <button
+                  className="utility-button compact"
+                  type="button"
+                  onClick={() => duplicateTrade(selectedTradeDetail)}
+                >
+                  Copy
                 </button>
                 <button
                   className="table-action danger"

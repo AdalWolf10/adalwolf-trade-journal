@@ -25,7 +25,7 @@ export default function Home() {
         throw new Error(data.error ?? "Unable to log in.");
       }
 
-      window.location.href = "/journal";
+      window.location.href = "/journal/home";
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Unable to log in.");
     } finally {
