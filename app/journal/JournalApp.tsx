@@ -7739,12 +7739,14 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   &lt;
                 </button>
               ) : null}
-              <img
-                alt={previewAttachment.filename}
-                className="image-preview"
-                src={previewAttachment.url}
-                style={{ transform: `scale(${attachmentZoom})` }}
-              />
+              <div className="cinematic-image-frame">
+                <img
+                  alt={previewAttachment.filename}
+                  className="image-preview"
+                  src={previewAttachment.url}
+                  style={{ transform: `scale(${attachmentZoom})` }}
+                />
+              </div>
               {attachmentPreview.attachments.length > 1 ? (
                 <button
                   className="cinematic-side-button right"
