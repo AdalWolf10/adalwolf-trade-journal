@@ -14,13 +14,20 @@ import {
 } from "@/lib/device-files";
 import { requireAuthenticatedRequest } from "@/lib/auth";
 import { getDb } from "@/db";
-import { dailyJournals } from "@/db/schema";
+import { dailyJournals, exitTrades, journalTrashItems } from "@/db/schema";
+
+const JOURNAL_ATTACHMENT_PREFIX = "journal-attachments/";
 
 async function journalAttachmentIds() {
-  const rows = await getDb().select({ attachments: dailyJournals.attachments }).from(dailyJournals);
+  const db = getDb();
+  const [journalRows, tradeRows, trashRows] = await Promise.all([
+    db.select({ attachments: dailyJournals.attachments }).from(dailyJournals),
+    db.select({ attachments: exitTrades.attachments }).from(exitTrades),
+    db.select({ payload: journalTrashItems.payload }).from(journalTrashItems),
+  ]);
   const ids = new Set<string>();
 
-  for (const row of rows) {
+  for (const row of [...journalRows, ...tradeRows]) {
     const attachments = parseAttachments(row.attachments);
     attachments.forEach((attachment) => {
       if (attachment.id) {
@@ -29,28 +36,66 @@ async function journalAttachmentIds() {
     });
   }
 
+  trashRows.forEach((row) => collectJournalAttachmentIds(row.payload, ids));
+
   return ids;
 }
 
-function parseAttachments(value: string) {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
+function collectJournalAttachmentIds(value: unknown, ids: Set<string>) {
+  if (!value) {
+    return;
+  }
+
+  if (typeof value === "string") {
+    if (value.startsWith(JOURNAL_ATTACHMENT_PREFIX)) {
+      ids.add(value);
+      return;
     }
 
-    return parsed
-      .map((attachment) => {
-        if (!attachment || typeof attachment !== "object") {
-          return null;
-        }
+    const parsed = value.trim().startsWith("[") || value.trim().startsWith("{") ? tryParseJson(value) : null;
+    if (parsed) {
+      collectJournalAttachmentIds(parsed, ids);
+    }
+    return;
+  }
 
-        const item = attachment as { id?: unknown };
-        return typeof item.id === "string" ? { id: item.id } : null;
-      })
-      .filter((attachment): attachment is { id: string } => Boolean(attachment));
-  } catch {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectJournalAttachmentIds(item, ids));
+    return;
+  }
+
+  if (typeof value === "object") {
+    const item = value as { id?: unknown };
+    if (typeof item.id === "string" && item.id.startsWith(JOURNAL_ATTACHMENT_PREFIX)) {
+      ids.add(item.id);
+    }
+    Object.values(value).forEach((itemValue) => collectJournalAttachmentIds(itemValue, ids));
+  }
+}
+
+function parseAttachments(value: string) {
+  const parsed = tryParseJson(value);
+  if (!Array.isArray(parsed)) {
     return [];
+  }
+
+  return parsed
+    .map((attachment) => {
+      if (!attachment || typeof attachment !== "object") {
+        return null;
+      }
+
+      const item = attachment as { id?: unknown };
+      return typeof item.id === "string" ? { id: item.id } : null;
+    })
+    .filter((attachment): attachment is { id: string } => Boolean(attachment));
+}
+
+function tryParseJson(value: string) {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
   }
 }
 

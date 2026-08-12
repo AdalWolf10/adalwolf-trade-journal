@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { exitTrades } from "@/db/schema";
+import { exitTrades, journalTrashItems } from "@/db/schema";
 import { requireAuthenticatedRequest } from "@/lib/auth";
 
 type TradePayload = {
@@ -33,6 +33,8 @@ type TradeAttachment = {
 };
 
 type BeHit = "Yes" | "No";
+
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 function makeId() {
   return crypto.randomUUID();
@@ -134,6 +136,29 @@ function tradeResponse(trade: typeof exitTrades.$inferSelect) {
   };
 }
 
+async function moveTradeToTrash(db: ReturnType<typeof getDb>, trade: typeof exitTrades.$inferSelect) {
+  const now = Date.now();
+  const label = [trade.session, trade.direction, trade.setupName]
+    .filter(Boolean)
+    .join(" · ");
+
+  const [trashItem] = await db
+    .insert(journalTrashItems)
+    .values({
+      deletedAt: now,
+      id: crypto.randomUUID(),
+      itemType: "trade",
+      payload: JSON.stringify(trade),
+      purgeAfter: now + TRASH_RETENTION_MS,
+      sourceDate: trade.date,
+      sourceId: trade.id,
+      sourceLabel: label || "Trade",
+    })
+    .returning();
+
+  return trashItem;
+}
+
 function parsePayload(payload: TradePayload) {
   const id = typeof payload.id === "string" ? payload.id.trim() : "";
   const date = typeof payload.date === "string" ? payload.date : "";
@@ -200,6 +225,10 @@ function toRouteErrorMessage(error: unknown) {
 
   if (combined.includes("no such table") || combined.includes("exit_trades")) {
     return "The trade journal database is not ready yet. Deploy the generated migration with the site.";
+  }
+
+  if (combined.includes("journal_trash_items")) {
+    return "The Recently Deleted database is not ready yet. Deploy the generated migration with the site.";
   }
 
   return message;
@@ -318,9 +347,16 @@ export async function DELETE(request: Request) {
     }
 
     const db = getDb();
+    const [trade] = await db.select().from(exitTrades).where(eq(exitTrades.id, id)).limit(1);
+
+    if (!trade) {
+      return Response.json({ error: "trade not found" }, { status: 404 });
+    }
+
+    const trashItem = await moveTradeToTrash(db, trade);
     await db.delete(exitTrades).where(eq(exitTrades.id, id));
 
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, trashItem });
   } catch (error) {
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }

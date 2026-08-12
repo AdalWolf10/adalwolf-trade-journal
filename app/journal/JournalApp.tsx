@@ -175,8 +175,24 @@ type DailyJournalsResponse = {
 
 type JournalAttachmentResponse = {
   attachment?: TradeAttachment;
+  attachments?: TradeAttachment[];
   error?: string;
   ok?: boolean;
+  trashItem?: JournalTrashItem;
+};
+
+type TrashResponse = {
+  attachment?: TradeAttachment;
+  attachments?: TradeAttachment[];
+  error?: string;
+  item?: JournalTrashItem;
+  items?: JournalTrashItem[];
+  journal?: DailyJournal;
+  ok?: boolean;
+  ownerId?: string;
+  ownerType?: "daily_journal" | "trade";
+  trade?: ExitTrade;
+  trashItem?: JournalTrashItem;
 };
 
 type StrategyResult = {
@@ -208,7 +224,22 @@ type TradeSort = {
 type ResultFilter = "all" | "win" | "loss" | "flat";
 type DailyRatingFilter = "all" | "low" | "mid" | "high";
 type BreakevenFilter = "all" | "none" | "one-plus" | "two-plus";
-type JournalShellView = "dashboard" | "home";
+type JournalShellView = "dashboard" | "home" | "trash";
+
+type JournalTrashType = "trade" | "daily_journal" | "attachment";
+
+type JournalTrashItem = {
+  deletedAt: number;
+  id: string;
+  itemType: JournalTrashType;
+  purgeAfter: number;
+  sourceDate: string;
+  sourceId: string;
+  sourceLabel: string;
+  summary: string;
+};
+
+type TrashFilter = "all" | JournalTrashType;
 
 type JournalFilters = {
   beHit: "all" | BeHit;
@@ -3503,6 +3534,8 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   const [deviceFiles, setDeviceFiles] = useState<DeviceFile[]>([]);
   const [deviceFolder, setDeviceFolder] = useState<DeviceFolder | null>(null);
   const [deviceSafety, setDeviceSafety] = useState<DeviceSafety | null>(null);
+  const [trashFilter, setTrashFilter] = useState<TrashFilter>("all");
+  const [trashItems, setTrashItems] = useState<JournalTrashItem[]>([]);
   const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null);
   const [attachmentZoom, setAttachmentZoom] = useState(1);
@@ -3527,6 +3560,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const [isPasswordSaving, setIsPasswordSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTrashLoading, setIsTrashLoading] = useState(false);
   const [logSearch, setLogSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
@@ -3540,6 +3574,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   const [selectedTradeDetailId, setSelectedTradeDetailId] = useState<string | null>(null);
   const [deviceNotice, setDeviceNotice] = useState("");
   const [securityNotice, setSecurityNotice] = useState("");
+  const [trashNotice, setTrashNotice] = useState("");
   const dataMenuRef = useRef<HTMLDivElement | null>(null);
   const dailyJournalPasteHandlerRef = useRef<((event: globalThis.ClipboardEvent) => void) | null>(null);
   const selectedMonthTabRef = useRef<HTMLButtonElement | null>(null);
@@ -3617,14 +3652,34 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
     }
   }, [handleUnauthorized]);
 
+  const loadTrash = useCallback(async () => {
+    setIsTrashLoading(true);
+    try {
+      const response = await fetch("/api/trash", { cache: "no-store" });
+      if (handleUnauthorized(response)) {
+        return;
+      }
+      const data = (await response.json()) as TrashResponse;
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to load Recently Deleted");
+      }
+      setTrashItems(data.items ?? []);
+    } catch (error) {
+      setTrashNotice(error instanceof Error ? error.message : "Unable to load Recently Deleted");
+    } finally {
+      setIsTrashLoading(false);
+    }
+  }, [handleUnauthorized]);
+
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       void loadTrades();
       void loadDailyJournals();
       void loadDeviceFiles();
+      void loadTrash();
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [loadDailyJournals, loadDeviceFiles, loadTrades]);
+  }, [loadDailyJournals, loadDeviceFiles, loadTrades, loadTrash]);
 
   useEffect(() => {
     const storedBackupAt = Number(decodeURIComponent(readClientCookie(backupReminderStorageKey)));
@@ -4137,6 +4192,22 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
     : "Never";
   const selectedMonthLabel = monthLabel(selectedMonth);
   const isHomeView = initialView === "home";
+  const isTrashView = initialView === "trash";
+  const filteredTrashItems = useMemo(
+    () =>
+      trashFilter === "all"
+        ? trashItems
+        : trashItems.filter((item) => item.itemType === trashFilter),
+    [trashFilter, trashItems],
+  );
+  const trashCounts = useMemo(
+    () => ({
+      attachment: trashItems.filter((item) => item.itemType === "attachment").length,
+      daily_journal: trashItems.filter((item) => item.itemType === "daily_journal").length,
+      trade: trashItems.filter((item) => item.itemType === "trade").length,
+    }),
+    [trashItems],
+  );
   const latestTrade = sortedTrades[0] ?? null;
   const latestTradeLabel = latestTrade
     ? `${latestTrade.date} · ${[latestTrade.session, latestTrade.direction, latestTrade.setupName]
@@ -4187,6 +4258,13 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
       label: "Files",
       meta: deviceStorageLabel || `${deviceFiles.length} files`,
       title: "Device Files",
+    },
+    {
+      action: "Open",
+      href: "/journal/trash",
+      label: "Trash",
+      meta: `${trashItems.length} item${trashItems.length === 1 ? "" : "s"}`,
+      title: "Recently Deleted",
     },
     {
       action: isSaving ? "Exporting" : "Export",
@@ -4549,11 +4627,16 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
       if (handleUnauthorized(response)) {
         return;
       }
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as TrashResponse;
       if (!response.ok) {
         throw new Error(data.error ?? "Unable to delete trade");
       }
       setTrades((current) => current.filter((trade) => trade.id !== id));
+      if (data.trashItem) {
+        setTrashItems((current) => [data.trashItem as JournalTrashItem, ...current]);
+      } else {
+        void loadTrash();
+      }
       if (editingId === id) {
         resetForm();
         setIsEntryOpen(false);
@@ -4561,7 +4644,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
       if (selectedTradeDetailId === id) {
         setSelectedTradeDetailId(null);
       }
-      setNotice("Trade deleted.");
+      setNotice("Trade moved to Recently Deleted.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to delete trade");
     }
@@ -4624,15 +4707,20 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
       if (handleUnauthorized(response)) {
         return;
       }
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as TrashResponse;
       if (!response.ok) {
         throw new Error(data.error ?? "Unable to delete daily journal");
       }
 
       setDailyJournals((current) => current.filter((journal) => journal.id !== selectedDailyJournal.id));
+      if (data.trashItem) {
+        setTrashItems((current) => [data.trashItem as JournalTrashItem, ...current]);
+      } else {
+        void loadTrash();
+      }
       setDailyDraft(defaultDailyJournal(selectedDay));
       setIsDailyJournalEditing(true);
-      setNotice("Daily journal deleted.");
+      setNotice("Daily journal moved to Recently Deleted.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to delete daily journal");
     } finally {
@@ -4990,11 +5078,120 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
     return () => document.removeEventListener("keydown", handlePreviewKeys);
   }, [attachmentPreview]);
 
-  function removeDailyJournalAttachment(id: string) {
-    setDailyDraft((current) => ({
-      ...current,
-      attachments: current.attachments.filter((attachment) => attachment.id !== id),
-    }));
+  async function removeDailyJournalAttachment(id: string) {
+    const savedJournal = dailyJournalByDate.get(dailyDraft.date);
+
+    if (!savedJournal) {
+      setDailyDraft((current) => ({
+        ...current,
+        attachments: current.attachments.filter((attachment) => attachment.id !== id),
+      }));
+      return;
+    }
+
+    setNotice("");
+    try {
+      const response = await fetch("/api/trash", {
+        body: JSON.stringify({
+          action: "trash-attachment",
+          attachmentId: id,
+          ownerId: savedJournal.id,
+          ownerType: "daily_journal",
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      if (handleUnauthorized(response)) {
+        return;
+      }
+      const data = (await response.json()) as TrashResponse;
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to remove attachment");
+      }
+
+      const attachments = data.attachments ?? dailyDraft.attachments.filter((attachment) => attachment.id !== id);
+      setDailyDraft((current) => ({ ...current, attachments }));
+      setDailyJournals((current) =>
+        current.map((journal) =>
+          journal.id === savedJournal.id ? { ...journal, attachments, updatedAt: Date.now() } : journal,
+        ),
+      );
+      if (data.trashItem) {
+        setTrashItems((current) => [data.trashItem as JournalTrashItem, ...current]);
+      } else {
+        void loadTrash();
+      }
+      setNotice("Attachment moved to Recently Deleted.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to remove attachment");
+    }
+  }
+
+  async function restoreTrashItem(id: string) {
+    setTrashNotice("");
+    try {
+      const response = await fetch(`/api/trash?id=${encodeURIComponent(id)}`, {
+        method: "PATCH",
+      });
+      if (handleUnauthorized(response)) {
+        return;
+      }
+      const data = (await response.json()) as TrashResponse;
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to restore item");
+      }
+
+      setTrashItems((current) => current.filter((item) => item.id !== id));
+      if (data.trade) {
+        const trade = normalizeStoredTrade(data.trade);
+        if (trade) {
+          setTrades((current) => [trade, ...current.filter((item) => item.id !== trade.id)]);
+        } else {
+          void loadTrades();
+        }
+      } else if (data.journal) {
+        const journal = normalizeDailyJournal(data.journal);
+        if (journal) {
+          setDailyJournals((current) => [journal, ...current.filter((item) => item.id !== journal.id)]);
+        } else {
+          void loadDailyJournals();
+        }
+      } else if (data.attachment) {
+        void loadDailyJournals();
+        void loadTrades();
+      }
+      void loadDeviceFiles();
+      setTrashNotice("Item restored.");
+    } catch (error) {
+      setTrashNotice(error instanceof Error ? error.message : "Unable to restore item");
+    }
+  }
+
+  async function deleteTrashItemForever(id: string) {
+    const item = trashItems.find((trashItem) => trashItem.id === id);
+    if (!window.confirm(`Delete ${item?.sourceLabel || "this item"} forever? This cannot be undone.`)) {
+      return;
+    }
+
+    setTrashNotice("");
+    try {
+      const response = await fetch(`/api/trash?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      if (handleUnauthorized(response)) {
+        return;
+      }
+      const data = (await response.json()) as TrashResponse;
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to delete forever");
+      }
+
+      setTrashItems((current) => current.filter((trashItem) => trashItem.id !== id));
+      void loadDeviceFiles();
+      setTrashNotice("Item permanently deleted.");
+    } catch (error) {
+      setTrashNotice(error instanceof Error ? error.message : "Unable to delete forever");
+    }
   }
 
   async function deleteDeviceFile(id: string) {
@@ -5460,6 +5657,29 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
     setAttachmentZoom(1);
   }
 
+  function trashTypeLabel(type: JournalTrashType) {
+    if (type === "daily_journal") {
+      return "Daily Journal";
+    }
+    return type === "attachment" ? "Screenshot" : "Trade";
+  }
+
+  function trashPurgeLabel(purgeAfter: number) {
+    const remainingDays = Math.max(0, Math.ceil((purgeAfter - Date.now()) / (24 * 60 * 60 * 1000)));
+    return remainingDays <= 1 ? "Expires in 1 day" : `Expires in ${remainingDays} days`;
+  }
+
+  function trashDeletedLabel(deletedAt: number) {
+    if (!deletedAt) {
+      return "Deleted recently";
+    }
+    return `Deleted ${new Date(deletedAt).toLocaleDateString("en-US", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })}`;
+  }
+
   function renderAttachmentGallery(
     attachments: TradeAttachment[],
     editable = false,
@@ -5468,7 +5688,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   ) {
     return (
       <div className="attachment-gallery">
-        {attachments.map((attachment, index) => {
+        {attachments.map((attachment) => {
           const isImage = isImageAttachment(attachment);
           const meta = [
             attachment.size ? fileSizeLabel(attachment.size) : "",
@@ -5485,7 +5705,9 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                 aria-label={`${isImage ? "Preview" : "Open"} ${attachment.filename}`}
                 onClick={() => {
                   if (isImage) {
-                    openAttachmentPreview(attachments, index, sourceLabel, sourceDate);
+                    const imageAttachments = attachments.filter(isImageAttachment);
+                    const imageIndex = imageAttachments.findIndex((item) => item.id === attachment.id);
+                    openAttachmentPreview(imageAttachments, Math.max(0, imageIndex), sourceLabel, sourceDate);
                     return;
                   }
 
@@ -5511,9 +5733,9 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                     <button
                       className="table-action danger"
                       type="button"
-                      onClick={() => removeDailyJournalAttachment(attachment.id)}
+                      onClick={() => void removeDailyJournalAttachment(attachment.id)}
                     >
-                      Remove
+                      {dailyJournalByDate.has(dailyDraft.date) ? "Trash" : "Remove"}
                     </button>
                   ) : null}
                 </div>
@@ -6010,7 +6232,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
             <span aria-hidden="true">H</span>
             <strong>Home</strong>
           </a>
-          <a className={isHomeView ? "" : "active"} href="/journal#dashboard-overview" onClick={() => setIsMobileNavOpen(false)}>
+          <a className={!isHomeView && !isTrashView ? "active" : ""} href="/journal#dashboard-overview" onClick={() => setIsMobileNavOpen(false)}>
             <span aria-hidden="true">D</span>
             <strong>Dashboard</strong>
           </a>
@@ -6033,6 +6255,10 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
           <a href="/journal/device-files" onClick={() => setIsMobileNavOpen(false)}>
             <span aria-hidden="true">F</span>
             <strong>Device Files</strong>
+          </a>
+          <a className={isTrashView ? "active" : ""} href="/journal/trash" onClick={() => setIsMobileNavOpen(false)}>
+            <span aria-hidden="true">R</span>
+            <strong>Trash</strong>
           </a>
         </nav>
 
@@ -6075,8 +6301,8 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
               Menu
             </button>
             <div>
-              <p className="eyebrow">{isHomeView ? "Private Dashboard" : "R Journal"}</p>
-              <h1>{isHomeView ? "Private Home" : "Trading Dashboard"}</h1>
+              <p className="eyebrow">{isHomeView ? "Private Dashboard" : isTrashView ? "Safety" : "R Journal"}</p>
+              <h1>{isHomeView ? "Private Home" : isTrashView ? "Recently Deleted" : "Trading Dashboard"}</h1>
               <p className="dashboard-motto">{'"PATIENCE | DISCIPLINE | EXECUTION"'}</p>
             </div>
           </div>
@@ -6388,6 +6614,106 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                 </a>
               </div>
             </article>
+          </section>
+        </section>
+      ) : isTrashView ? (
+        <section className="trash-page" aria-label="Recently deleted journal items">
+          <section className="trash-hero">
+            <div>
+              <p className="eyebrow">Recoverable for 30 days</p>
+              <h2>Recently Deleted</h2>
+              <p>Trades, daily journals, and journal screenshots stay here before they are removed forever.</p>
+            </div>
+            <button className="utility-button compact" disabled={isTrashLoading} type="button" onClick={() => void loadTrash()}>
+              Refresh
+            </button>
+          </section>
+
+          <section className="trash-stat-grid" aria-label="Trash summary">
+            <article>
+              <span>Total</span>
+              <strong>{trashItems.length}</strong>
+              <small>{isTrashLoading ? "Checking..." : "Recoverable items"}</small>
+            </article>
+            <article>
+              <span>Trades</span>
+              <strong>{trashCounts.trade}</strong>
+              <small>Exit entries</small>
+            </article>
+            <article>
+              <span>Daily Journals</span>
+              <strong>{trashCounts.daily_journal}</strong>
+              <small>Full day reviews</small>
+            </article>
+            <article>
+              <span>Screenshots</span>
+              <strong>{trashCounts.attachment}</strong>
+              <small>Private journal files</small>
+            </article>
+          </section>
+
+          <section className="trash-toolbar" aria-label="Trash filters">
+            {([
+              ["all", "All"],
+              ["trade", "Trades"],
+              ["daily_journal", "Daily Journals"],
+              ["attachment", "Screenshots"],
+            ] as const).map(([value, label]) => (
+              <button
+                className={trashFilter === value ? "active" : ""}
+                key={value}
+                type="button"
+                onClick={() => setTrashFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </section>
+
+          {trashNotice ? <p className="notice trash-notice">{trashNotice}</p> : null}
+
+          <section className="trash-list-panel">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Journal Trash</p>
+                <h2>{filteredTrashItems.length} item{filteredTrashItems.length === 1 ? "" : "s"}</h2>
+              </div>
+              <span className="status-pill">30 days</span>
+            </div>
+
+            <div className="trash-list">
+              {filteredTrashItems.map((item) => (
+                <article className="trash-row" key={item.id}>
+                  <div className="trash-row-main">
+                    <span className={`trash-type-pill ${item.itemType}`}>{trashTypeLabel(item.itemType)}</span>
+                    <div>
+                      <strong>{item.sourceLabel || item.summary || trashTypeLabel(item.itemType)}</strong>
+                      <small>{[item.sourceDate, item.summary].filter(Boolean).join(" · ")}</small>
+                    </div>
+                  </div>
+                  <div className="trash-row-meta">
+                    <span>{trashDeletedLabel(item.deletedAt)}</span>
+                    <span>{trashPurgeLabel(item.purgeAfter)}</span>
+                  </div>
+                  <div className="trash-row-actions">
+                    {item.sourceDate ? (
+                      <button className="table-action" type="button" onClick={() => openDayDetail(item.sourceDate)}>
+                        Day
+                      </button>
+                    ) : null}
+                    <button className="table-action" type="button" onClick={() => void restoreTrashItem(item.id)}>
+                      Restore
+                    </button>
+                    <button className="table-action danger" type="button" onClick={() => void deleteTrashItemForever(item.id)}>
+                      Delete Forever
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!filteredTrashItems.length ? (
+                <p className="empty-panel-note">{isTrashLoading ? "Loading Recently Deleted..." : "Trash is empty."}</p>
+              ) : null}
+            </div>
           </section>
         </section>
       ) : (
@@ -7331,7 +7657,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
 
       {attachmentPreview && previewAttachment ? (
         <div
-          className="modal-backdrop image-preview-backdrop"
+          className="modal-backdrop image-preview-backdrop cinematic-preview-backdrop"
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
@@ -7340,72 +7666,114 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
           }}
         >
           <section
-            className="entry-panel entry-modal image-preview-modal notion-modal"
+            className="image-preview-modal cinematic-preview-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="attachment-preview-heading"
           >
-            <div className="panel-heading">
+            <div className="cinematic-preview-topbar">
               <div>
                 <p className="eyebrow">Screenshot Viewer</p>
                 <h2 id="attachment-preview-heading">{previewAttachment.filename}</h2>
                 <small className="preview-caption">{previewAttachmentMeta}</small>
               </div>
-              <div className="panel-actions">
+              <div className="cinematic-preview-actions">
                 <button
-                  className="table-action"
+                  className="cinematic-icon-button"
+                  aria-label="Previous screenshot"
                   disabled={attachmentPreview.attachments.length <= 1}
                   type="button"
                   onClick={() => moveAttachmentPreview(-1)}
                 >
-                  Prev
+                  &lt;
                 </button>
                 <button
-                  className="table-action"
+                  className="cinematic-icon-button"
+                  aria-label="Next screenshot"
                   disabled={attachmentPreview.attachments.length <= 1}
                   type="button"
                   onClick={() => moveAttachmentPreview(1)}
                 >
-                  Next
+                  &gt;
                 </button>
                 <button
-                  className="table-action"
+                  className="cinematic-icon-button"
+                  aria-label="Zoom out"
                   type="button"
                   onClick={() => setAttachmentZoom((current) => clamp(current - 0.25, 0.75, 2.5))}
                 >
                   -
                 </button>
-                <button className="table-action" type="button" onClick={() => setAttachmentZoom(1)}>
+                <button className="cinematic-zoom-button" type="button" onClick={() => setAttachmentZoom(1)}>
                   {Math.round(attachmentZoom * 100)}%
                 </button>
                 <button
-                  className="table-action"
+                  className="cinematic-icon-button"
+                  aria-label="Zoom in"
                   type="button"
                   onClick={() => setAttachmentZoom((current) => clamp(current + 0.25, 0.75, 2.5))}
                 >
                   +
                 </button>
                 {attachmentPreview.sourceDate ? (
-                  <button className="table-action" type="button" onClick={openPreviewSourceDay}>
+                  <button className="cinematic-text-button" type="button" onClick={openPreviewSourceDay}>
                     Day
                   </button>
                 ) : null}
-                <a className="table-action" href={previewAttachment.url} target="_blank" rel="noreferrer">
+                <a className="cinematic-text-button" href={previewAttachment.url} target="_blank" rel="noreferrer">
                   Open
                 </a>
-                <button className="table-action" type="button" onClick={closeAttachmentPreview}>
-                  Close
+                <button className="cinematic-icon-button" aria-label="Close screenshot viewer" type="button" onClick={closeAttachmentPreview}>
+                  X
                 </button>
               </div>
             </div>
-            <div className="image-preview-stage">
+            <div className="image-preview-stage cinematic-preview-stage">
+              {attachmentPreview.attachments.length > 1 ? (
+                <button
+                  className="cinematic-side-button left"
+                  aria-label="Previous screenshot"
+                  type="button"
+                  onClick={() => moveAttachmentPreview(-1)}
+                >
+                  &lt;
+                </button>
+              ) : null}
               <img
                 alt={previewAttachment.filename}
                 className="image-preview"
                 src={previewAttachment.url}
                 style={{ transform: `scale(${attachmentZoom})` }}
               />
+              {attachmentPreview.attachments.length > 1 ? (
+                <button
+                  className="cinematic-side-button right"
+                  aria-label="Next screenshot"
+                  type="button"
+                  onClick={() => moveAttachmentPreview(1)}
+                >
+                  &gt;
+                </button>
+              ) : null}
             </div>
+            {attachmentPreview.attachments.length > 1 ? (
+              <div className="cinematic-thumbnail-strip" aria-label="Screenshot thumbnails">
+                {attachmentPreview.attachments.map((attachment, index) => (
+                  <button
+                    className={index === attachmentPreview.index ? "active" : ""}
+                    key={attachment.id}
+                    type="button"
+                    aria-label={`Open screenshot ${index + 1}`}
+                    onClick={() => {
+                      setAttachmentPreview((current) => (current ? { ...current, index } : current));
+                      setAttachmentZoom(1);
+                    }}
+                  >
+                    <img alt="" src={attachment.url} />
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

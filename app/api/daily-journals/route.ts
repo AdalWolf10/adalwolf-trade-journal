@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { dailyJournals } from "@/db/schema";
+import { dailyJournals, journalTrashItems } from "@/db/schema";
 import { requireAuthenticatedRequest } from "@/lib/auth";
 
 type JournalPayload = {
@@ -28,6 +28,7 @@ type JournalAttachment = {
 const allowedPriceActionRatings = new Set(
   Array.from({ length: 21 }, (_, index) => index * 0.5).filter((rating) => rating !== 7),
 );
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 function makeId() {
   return crypto.randomUUID();
@@ -128,6 +129,28 @@ function journalResponse(journal: typeof dailyJournals.$inferSelect) {
   };
 }
 
+async function moveDailyJournalToTrash(
+  db: ReturnType<typeof getDb>,
+  journal: typeof dailyJournals.$inferSelect,
+) {
+  const now = Date.now();
+  const [trashItem] = await db
+    .insert(journalTrashItems)
+    .values({
+      deletedAt: now,
+      id: crypto.randomUUID(),
+      itemType: "daily_journal",
+      payload: JSON.stringify(journal),
+      purgeAfter: now + TRASH_RETENTION_MS,
+      sourceDate: journal.date,
+      sourceId: journal.id,
+      sourceLabel: "Daily Journal",
+    })
+    .returning();
+
+  return trashItem;
+}
+
 function parsePayload(payload: JournalPayload) {
   const id = typeof payload.id === "string" ? payload.id.trim() : "";
   const date = typeof payload.date === "string" ? payload.date : "";
@@ -175,6 +198,10 @@ function toRouteErrorMessage(error: unknown) {
 
   if (combined.includes("no such table") || combined.includes("daily_journals")) {
     return "The daily journal database is not ready yet. Deploy the generated migration with the site.";
+  }
+
+  if (combined.includes("journal_trash_items")) {
+    return "The Recently Deleted database is not ready yet. Deploy the generated migration with the site.";
   }
 
   if (combined.includes("UNIQUE constraint failed")) {
@@ -294,9 +321,17 @@ export async function DELETE(request: Request) {
       return Response.json({ error: "id is required" }, { status: 400 });
     }
 
-    await getDb().delete(dailyJournals).where(eq(dailyJournals.id, id));
+    const db = getDb();
+    const [journal] = await db.select().from(dailyJournals).where(eq(dailyJournals.id, id)).limit(1);
 
-    return Response.json({ ok: true });
+    if (!journal) {
+      return Response.json({ error: "daily journal not found" }, { status: 404 });
+    }
+
+    const trashItem = await moveDailyJournalToTrash(db, journal);
+    await db.delete(dailyJournals).where(eq(dailyJournals.id, id));
+
+    return Response.json({ ok: true, trashItem });
   } catch (error) {
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }

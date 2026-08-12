@@ -41,6 +41,17 @@ export const dailyJournals = sqliteTable(
   (table) => [uniqueIndex("daily_journals_date_unique").on(table.date)],
 );
 
+export const journalTrashItems = sqliteTable("journal_trash_items", {
+  id: text("id").primaryKey(),
+  itemType: text("item_type", { enum: ["trade", "daily_journal", "attachment"] }).notNull(),
+  sourceId: text("source_id").notNull().default(""),
+  sourceDate: text("source_date").notNull().default(""),
+  sourceLabel: text("source_label").notNull().default(""),
+  payload: text("payload").notNull(),
+  deletedAt: integer("deleted_at").notNull(),
+  purgeAfter: integer("purge_after").notNull(),
+});
+
 export const authSettings = sqliteTable("auth_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),

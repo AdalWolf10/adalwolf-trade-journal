@@ -50,6 +50,13 @@
       "when": 1785561280306,
       "tag": "0006_ordinary_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786506564907,
+      "tag": "0007_blue_susan_delgado",
+      "breakpoints": true
     }
   ]
 }

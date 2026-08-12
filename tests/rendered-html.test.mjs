@@ -192,8 +192,10 @@ test("wires the hosted exit journal data model", async () => {
     dailyRoute,
     deviceRoute,
     journalAttachmentRoute,
+    trashRoute,
     devicePage,
     deviceClient,
+    trashPage,
     qualityPage,
     qualityClient,
     deviceHelpers,
@@ -207,6 +209,7 @@ test("wires the hosted exit journal data model", async () => {
     r2Migration,
     richTradeMigration,
     dailyJournalMigration,
+    trashMigration,
   ] =
     await Promise.all([
       readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
@@ -223,8 +226,10 @@ test("wires the hosted exit journal data model", async () => {
       readFile(new URL("../app/api/daily-journals/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/device-files/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/journal-attachments/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/api/trash/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/device-files/page.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/device-files/DeviceFilesClient.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/journal/trash/page.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/quality/page.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/journal/quality/QualityPageClient.tsx", import.meta.url), "utf8"),
       readFile(new URL("../lib/device-files.ts", import.meta.url), "utf8"),
@@ -238,11 +243,13 @@ test("wires the hosted exit journal data model", async () => {
       readFile(new URL("../drizzle/0004_wandering_maria_hill.sql", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0005_wide_human_cannonball.sql", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0006_ordinary_mister_sinister.sql", import.meta.url), "utf8"),
+      readFile(new URL("../drizzle/0007_blue_susan_delgado.sql", import.meta.url), "utf8"),
     ]);
 
   assert.match(journal, /fetch\("\/api\/trades"/);
   assert.match(journal, /fetch\("\/api\/daily-journals"/);
   assert.match(journal, /fetch\("\/api\/device-files"/);
+  assert.match(journal, /fetch\("\/api\/trash"/);
   assert.match(journal, /handleDeviceUpload/);
   assert.match(journal, /rotateDeviceShortCode/);
   assert.match(journal, /Regenerate the TV code/);
@@ -251,10 +258,16 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journal, /Open Device Files/);
   assert.match(journal, /\/journal\/device-files/);
   assert.match(journal, /\/journal\/quality/);
+  assert.match(journal, /\/journal\/trash/);
   assert.match(journal, /\/journal\/home/);
   assert.match(journal, /initialView = "dashboard"/);
-  assert.match(journal, /JournalShellView = "dashboard" \| "home"/);
+  assert.match(journal, /JournalShellView = "dashboard" \| "home" \| "trash"/);
   assert.match(journal, /homeTiles/);
+  assert.match(journal, /Recently Deleted/);
+  assert.match(journal, /restoreTrashItem/);
+  assert.match(journal, /deleteTrashItemForever/);
+  assert.match(journal, /trash-attachment/);
+  assert.match(journal, /cinematic-preview-modal/);
   assert.match(journal, /copyLastTradeSetup/);
   assert.match(journal, /toggleDraftTag/);
   assert.match(journal, /body: file/);
@@ -298,6 +311,10 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(devicePage, /isAuthenticated/);
   assert.match(devicePage, /redirect\("\/"\)/);
   assert.match(devicePage, /DeviceFilesClient/);
+  assert.match(trashPage, /isAuthenticated/);
+  assert.match(trashPage, /redirect\("\/"\)/);
+  assert.match(trashPage, /initialView="trash"/);
+  assert.match(trashPage, /title: "Recently Deleted"/);
   assert.match(deviceClient, /Drop files here/);
   assert.match(deviceClient, /Storage Safety/);
   assert.match(deviceClient, /Pause Device Files/);
@@ -384,6 +401,15 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journalAttachmentRoute, /export async function POST/);
   assert.match(journalAttachmentRoute, /export async function GET/);
   assert.match(journalAttachmentRoute, /export async function DELETE/);
+  assert.match(trashRoute, /requireAuthenticatedRequest/);
+  assert.match(trashRoute, /journalTrashItems/);
+  assert.match(trashRoute, /TRASH_RETENTION_MS = 30 \* 24 \* 60 \* 60 \* 1000/);
+  assert.match(trashRoute, /trash-attachment/);
+  assert.match(trashRoute, /deleteAttachmentObjects/);
+  assert.match(trashRoute, /export async function GET/);
+  assert.match(trashRoute, /export async function POST/);
+  assert.match(trashRoute, /export async function PATCH/);
+  assert.match(trashRoute, /export async function DELETE/);
   assert.match(layout, /Welcome/);
   assert.match(layout, /force-dynamic/);
   assert.match(layout, /revalidate = 0/);
@@ -398,6 +424,7 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(schema, /authSettings/);
   assert.match(schema, /authAttempts/);
   assert.match(schema, /dailyJournals/);
+  assert.match(schema, /journalTrashItems/);
   assert.match(schema, /sqliteTable\("exit_trades"/);
   assert.match(schema, /sqliteTable\(\n  "daily_journals"/);
   assert.match(schema, /instrument: text\("instrument"\)/);
@@ -414,6 +441,8 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(schema, /objectKey: text\("object_key"\)/);
   assert.match(deviceRoute, /requireAuthenticatedRequest/);
   assert.match(deviceRoute, /journalAttachmentIds/);
+  assert.match(deviceRoute, /journalTrashItems/);
+  assert.match(deviceRoute, /collectJournalAttachmentIds/);
   assert.match(deviceRoute, /hiddenAttachmentIds/);
   assert.match(deviceRoute, /parseDeviceFileUpload/);
   assert.match(deviceRoute, /parseDeviceFileUpload\(request\)/);
@@ -482,6 +511,9 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(dailyJournalMigration, /`price_action_rating` real DEFAULT 0 NOT NULL/);
   assert.match(dailyJournalMigration, /`breakeven_trades` integer DEFAULT 0 NOT NULL/);
   assert.match(dailyJournalMigration, /daily_journals_date_unique/);
+  assert.match(trashMigration, /CREATE TABLE `journal_trash_items`/);
+  assert.match(trashMigration, /`item_type` text NOT NULL/);
+  assert.match(trashMigration, /`purge_after` integer NOT NULL/);
   assert.doesNotMatch(deviceHelpers + worker, /Math\.random/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(journal + layout, /_sites-preview|Starter Project|codex-preview/);
