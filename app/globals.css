@@ -2797,11 +2797,10 @@ textarea:focus {
 .cinematic-image-frame {
   position: absolute;
   inset: 78px 82px 118px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: contain;
 }
 
 .image-preview-stage.cinematic-preview-stage .image-preview {

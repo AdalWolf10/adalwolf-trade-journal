@@ -259,11 +259,6 @@ type AttachmentPreviewState = {
   sourceLabel: string;
 };
 
-type PreviewImageSize = {
-  height: number;
-  width: number;
-};
-
 type TradeTextField = "notes";
 type DailyTextField = "htfBias" | "orm" | "narrative" | "reviewNotes";
 
@@ -972,22 +967,14 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function fittedPreviewImageStyle(
-  frame: PreviewImageSize,
-  image: PreviewImageSize,
-  zoom: number,
-): CSSProperties {
-  if (!frame.width || !frame.height || !image.width || !image.height) {
-    return { opacity: 0 };
-  }
+function cssImageUrl(value: string) {
+  return `url("${value.replace(/["\\\n\r\f]/g, "\\$&")}")`;
+}
 
-  const fitScale = Math.min(frame.width / image.width, frame.height / image.height);
-  const scale = fitScale * zoom;
-
+function attachmentPreviewBackgroundStyle(attachment: TradeAttachment, zoom: number): CSSProperties {
   return {
-    height: Math.max(1, Math.floor(image.height * scale)),
-    opacity: 1,
-    width: Math.max(1, Math.floor(image.width * scale)),
+    backgroundImage: cssImageUrl(attachment.url),
+    backgroundSize: zoom <= 1 ? "contain" : `auto ${Math.round(zoom * 100)}%`,
   };
 }
 
@@ -3563,10 +3550,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   const [trashItems, setTrashItems] = useState<JournalTrashItem[]>([]);
   const [tradeSort, setTradeSort] = useState<TradeSort>({ direction: "desc", key: "date" });
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null);
-  const attachmentPreviewFrameRef = useRef<HTMLDivElement | null>(null);
   const [attachmentZoom, setAttachmentZoom] = useState(1);
-  const [attachmentPreviewFrameSize, setAttachmentPreviewFrameSize] = useState<PreviewImageSize>({ height: 0, width: 0 });
-  const [attachmentPreviewImageSize, setAttachmentPreviewImageSize] = useState<PreviewImageSize>({ height: 0, width: 0 });
   const [filters, setFilters] = useState<JournalFilters>(() => defaultJournalFilters);
   const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
   const [backupReminderDismissedAt, setBackupReminderDismissedAt] = useState<number | null>(null);
@@ -5096,56 +5080,14 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
       }
 
       if (event.key === "+" || event.key === "=") {
-        setAttachmentZoom((current) => clamp(current + 0.25, 0.75, 2.5));
+        setAttachmentZoom((current) => clamp(current + 0.25, 1, 2.5));
       } else if (event.key === "-") {
-        setAttachmentZoom((current) => clamp(current - 0.25, 0.75, 2.5));
+        setAttachmentZoom((current) => clamp(current - 0.25, 1, 2.5));
       }
     }
 
     document.addEventListener("keydown", handlePreviewKeys);
     return () => document.removeEventListener("keydown", handlePreviewKeys);
-  }, [attachmentPreview]);
-
-  useEffect(() => {
-    const activeAttachmentId = attachmentPreview?.attachments[attachmentPreview.index]?.id ?? "";
-    if (!activeAttachmentId) {
-      setAttachmentPreviewImageSize({ height: 0, width: 0 });
-      return;
-    }
-
-    setAttachmentPreviewImageSize({ height: 0, width: 0 });
-  }, [attachmentPreview?.attachments, attachmentPreview?.index]);
-
-  useEffect(() => {
-    if (!attachmentPreview) {
-      setAttachmentPreviewFrameSize({ height: 0, width: 0 });
-      return undefined;
-    }
-
-    const frame = attachmentPreviewFrameRef.current;
-    if (!frame) {
-      return undefined;
-    }
-
-    const updateFrameSize = () => {
-      const rect = frame.getBoundingClientRect();
-      const width = Math.max(0, Math.floor(rect.width));
-      const height = Math.max(0, Math.floor(rect.height));
-
-      setAttachmentPreviewFrameSize((current) =>
-        current.width === width && current.height === height ? current : { height, width },
-      );
-    };
-
-    updateFrameSize();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateFrameSize) : null;
-    observer?.observe(frame);
-    window.addEventListener("resize", updateFrameSize);
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", updateFrameSize);
-    };
   }, [attachmentPreview]);
 
   async function removeDailyJournalAttachment(id: string) {
@@ -6265,7 +6207,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
         .join(" · ")
     : "";
   const previewImageStyle = previewAttachment
-    ? fittedPreviewImageStyle(attachmentPreviewFrameSize, attachmentPreviewImageSize, attachmentZoom)
+    ? attachmentPreviewBackgroundStyle(previewAttachment, attachmentZoom)
     : undefined;
 
   return (
@@ -7773,18 +7715,18 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   className="cinematic-icon-button"
                   aria-label="Zoom out"
                   type="button"
-                  onClick={() => setAttachmentZoom((current) => clamp(current - 0.25, 0.75, 2.5))}
+                  onClick={() => setAttachmentZoom((current) => clamp(current - 0.25, 1, 2.5))}
                 >
                   -
                 </button>
                 <button className="cinematic-zoom-button" type="button" onClick={() => setAttachmentZoom(1)}>
-                  {Math.round(attachmentZoom * 100)}%
+                  {attachmentZoom === 1 ? "Fit" : `${Math.round(attachmentZoom * 100)}%`}
                 </button>
                 <button
                   className="cinematic-icon-button"
                   aria-label="Zoom in"
                   type="button"
-                  onClick={() => setAttachmentZoom((current) => clamp(current + 0.25, 0.75, 2.5))}
+                  onClick={() => setAttachmentZoom((current) => clamp(current + 0.25, 1, 2.5))}
                 >
                   +
                 </button>
@@ -7812,23 +7754,12 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   &lt;
                 </button>
               ) : null}
-              <div className="cinematic-image-frame" ref={attachmentPreviewFrameRef}>
-                <img
-                  alt={previewAttachment.filename}
-                  className="image-preview"
-                  decoding="async"
-                  key={previewAttachment.id}
-                  onLoad={(event) => {
-                    const image = event.currentTarget;
-                    setAttachmentPreviewImageSize({
-                      height: image.naturalHeight,
-                      width: image.naturalWidth,
-                    });
-                  }}
-                  src={previewAttachment.url}
-                  style={previewImageStyle}
-                />
-              </div>
+              <div
+                aria-label={previewAttachment.filename}
+                className="cinematic-image-frame"
+                role="img"
+                style={previewImageStyle}
+              />
               {attachmentPreview.attachments.length > 1 ? (
                 <button
                   className="cinematic-side-button right"
