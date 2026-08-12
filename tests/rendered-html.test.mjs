@@ -269,8 +269,8 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journal, /trash-attachment/);
   assert.match(journal, /cinematic-preview-modal/);
   assert.match(journal, /cinematic-image-frame/);
-  assert.match(journal, /attachmentPreviewBackgroundStyle/);
-  assert.match(journal, /backgroundSize: zoom <= 1 \? "contain"/);
+  assert.match(journal, /attachmentPreviewImageStyle/);
+  assert.match(journal, /cinematic-preview-image/);
   assert.match(journal, /copyLastTradeSetup/);
   assert.match(journal, /toggleDraftTag/);
   assert.match(journal, /body: file/);

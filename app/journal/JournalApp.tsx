@@ -967,14 +967,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function cssImageUrl(value: string) {
-  return `url("${value.replace(/["\\\n\r\f]/g, "\\$&")}")`;
-}
-
-function attachmentPreviewBackgroundStyle(attachment: TradeAttachment, zoom: number): CSSProperties {
+function attachmentPreviewImageStyle(zoom: number): CSSProperties {
   return {
-    backgroundImage: cssImageUrl(attachment.url),
-    backgroundSize: zoom <= 1 ? "contain" : `auto ${Math.round(zoom * 100)}%`,
+    height: `${zoom * 100}%`,
+    width: `${zoom * 100}%`,
   };
 }
 
@@ -6206,9 +6202,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
         .filter(Boolean)
         .join(" · ")
     : "";
-  const previewImageStyle = previewAttachment
-    ? attachmentPreviewBackgroundStyle(previewAttachment, attachmentZoom)
-    : undefined;
+  const previewImageStyle = attachmentPreviewImageStyle(attachmentZoom);
 
   return (
     <main className={`journal-shell ${isNavCollapsed ? "nav-collapsed" : ""}`} data-theme={theme}>
@@ -7754,12 +7748,16 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   &lt;
                 </button>
               ) : null}
-              <div
-                aria-label={previewAttachment.filename}
-                className="cinematic-image-frame"
-                role="img"
-                style={previewImageStyle}
-              />
+              <div className="cinematic-image-frame">
+                <img
+                  alt={previewAttachment.filename}
+                  className="image-preview cinematic-preview-image"
+                  decoding="async"
+                  key={previewAttachment.id}
+                  src={previewAttachment.url}
+                  style={previewImageStyle}
+                />
+              </div>
               {attachmentPreview.attachments.length > 1 ? (
                 <button
                   className="cinematic-side-button right"

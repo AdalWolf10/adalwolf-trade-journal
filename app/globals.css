@@ -2689,32 +2689,42 @@ textarea:focus {
   z-index: 80;
   display: block;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.94);
+  background:
+    radial-gradient(circle at 50% 45%, rgba(18, 28, 46, 0.6), transparent 48rem),
+    rgba(0, 0, 0, 0.96);
   padding: 0;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(12px);
 }
 
 .image-preview-modal.cinematic-preview-modal {
   position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   border: 0;
-  background: #020304;
+  background:
+    linear-gradient(180deg, rgba(8, 12, 20, 0.98), rgba(2, 3, 6, 0.98)),
+    #020304;
   color: #f8fafc;
 }
 
 .cinematic-preview-topbar {
-  position: absolute;
-  inset: 0 0 auto;
+  position: relative;
   z-index: 3;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 22px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
+  min-height: 76px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.13);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.86), rgba(2, 6, 12, 0.72));
+  padding: 14px 18px;
   pointer-events: none;
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
 }
 
 .cinematic-preview-topbar > *,
@@ -2748,15 +2758,19 @@ textarea:focus {
 .cinematic-icon-button,
 .cinematic-text-button,
 .cinematic-zoom-button {
-  min-height: 34px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  background: rgba(17, 24, 39, 0.78);
+  min-height: 36px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.82);
   color: #f8fafc;
   font-size: 0.78rem;
   font-weight: 820;
   text-decoration: none;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
 }
 
 .cinematic-icon-button,
@@ -2778,12 +2792,18 @@ textarea:focus {
 .cinematic-zoom-button:hover {
   border-color: rgba(116, 167, 255, 0.62);
   background: rgba(30, 41, 59, 0.92);
+  transform: translateY(-1px);
 }
 
 .image-preview-stage.cinematic-preview-stage {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(48px, 4vw) minmax(0, 1fr) minmax(48px, 4vw);
+  gap: 12px;
+  align-items: stretch;
   width: 100%;
-  height: 100vh;
+  height: auto;
+  min-height: 0;
   max-height: none;
   overflow: hidden;
   border: 0;
@@ -2791,36 +2811,52 @@ textarea:focus {
   background:
     radial-gradient(circle at center, rgba(30, 41, 59, 0.24), transparent 36rem),
     #020304;
-  padding: 0;
+  padding: 14px 12px;
 }
 
 .cinematic-image-frame {
-  position: absolute;
-  inset: 78px 82px 118px;
-  overflow: hidden;
-  background-position: center center;
-  background-repeat: no-repeat;
-  background-size: contain;
+  position: relative;
+  grid-column: 2;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  place-items: center;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.36), rgba(2, 6, 12, 0.2)),
+    rgba(2, 6, 12, 0.44);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
 }
 
-.image-preview-stage.cinematic-preview-stage .image-preview {
+.image-preview-stage.cinematic-preview-stage .cinematic-preview-image {
   flex: 0 0 auto;
   display: block;
+  min-width: 0;
+  min-height: 0;
   max-width: none;
   max-height: none;
-  border-radius: 4px;
-  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.46);
+  border-radius: 8px;
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5);
   object-fit: contain;
   object-position: center center;
+  transition:
+    width 160ms ease,
+    height 160ms ease;
 }
 
 .cinematic-side-button {
-  position: fixed;
-  top: 50%;
+  position: relative;
+  top: auto;
   z-index: 4;
+  align-self: center;
   display: grid;
   width: 42px;
   height: 42px;
+  justify-self: center;
   place-items: center;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 999px;
@@ -2828,52 +2864,63 @@ textarea:focus {
   color: #f8fafc;
   font-size: 1.2rem;
   font-weight: 820;
-  transform: translateY(-50%);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
 }
 
 .cinematic-side-button.left {
-  left: 18px;
+  grid-column: 1;
 }
 
 .cinematic-side-button.right {
-  right: 18px;
+  grid-column: 3;
 }
 
 .cinematic-side-button:hover {
   border-color: rgba(116, 167, 255, 0.62);
   background: rgba(30, 41, 59, 0.94);
+  transform: scale(1.04);
 }
 
 .cinematic-thumbnail-strip {
-  position: absolute;
-  inset: auto 50% 18px auto;
+  position: relative;
   z-index: 5;
   display: flex;
+  justify-self: center;
   max-width: min(620px, calc(100vw - 48px));
   gap: 8px;
   overflow-x: auto;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 10px;
-  background: rgba(3, 7, 18, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(8, 13, 24, 0.86);
+  margin: 0 auto 12px;
   padding: 7px;
-  transform: translateX(50%);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(14px);
 }
 
 .cinematic-thumbnail-strip button {
-  width: 54px;
-  height: 38px;
-  min-width: 54px;
+  width: 58px;
+  height: 40px;
+  min-width: 58px;
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   background: rgba(15, 23, 42, 0.72);
   opacity: 0.72;
   padding: 0;
+  transition:
+    border-color 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
 }
 
 .cinematic-thumbnail-strip button.active {
   border-color: #74a7ff;
   opacity: 1;
+  transform: translateY(-1px);
 }
 
 .cinematic-thumbnail-strip img {
@@ -5080,7 +5127,7 @@ textarea:focus {
   }
 
   .cinematic-image-frame {
-    inset: 126px 56px 112px;
+    inset: auto;
   }
 }
 
@@ -5177,8 +5224,15 @@ textarea:focus {
     min-width: 0;
   }
 
+  .image-preview-stage.cinematic-preview-stage {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 10px;
+  }
+
   .cinematic-image-frame {
-    inset: 138px 14px 104px;
+    grid-column: 1;
+    inset: auto;
+    border-radius: 10px;
   }
 
   .cinematic-side-button {
