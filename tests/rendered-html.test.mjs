@@ -524,3 +524,44 @@ test("wires the hosted exit journal data model", async () => {
   await access(new URL("../public/og.png", import.meta.url));
   await assert.rejects(access(new URL("app/_sites-preview", templateRoot)));
 });
+
+test("revokes sessions on logout", async () => {
+  const [auth, logout, schema, revocationMigration, journalMigrations] = await Promise.all([
+    readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/logout/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0008_serious_phantom_reporter.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"),
+  ]);
+
+  // Every issued session carries a random id so a single device can be revoked.
+  assert.match(auth, /jti: string/);
+  assert.match(auth, /jti: makeSessionId\(\)/);
+  assert.match(auth, /crypto\.getRandomValues/);
+
+  // Verification rejects unidentifiable and revoked sessions.
+  assert.match(auth, /if \(!payload\.sub \|\| !payload\.jti/);
+  assert.match(auth, /await isSessionRevoked\(payload\.jti\)/);
+  assert.match(auth, /export async function revokeSessionToken/);
+  assert.match(auth, /sessionRevocations/);
+  assert.match(auth, /purgeExpiredRevocations/);
+  assert.match(auth, /export function readSessionToken/);
+
+  // An unreadable revocation list must not hand out access.
+  assert.match(auth, /Fail closed: an unreadable revocation list must not grant access\./);
+  assert.match(auth, /session_revocations/);
+
+  // The logout route requires a session and revokes it server-side.
+  assert.match(logout, /readSessionToken\(request\)/);
+  assert.match(logout, /status: 401/);
+  assert.match(logout, /await revokeSessionToken\(token\)/);
+  assert.match(logout, /makeExpiredSessionCookie/);
+
+  assert.match(schema, /sessionRevocations/);
+  assert.match(schema, /sqliteTable\("session_revocations"/);
+  assert.match(schema, /jti: text\("jti"\)\.primaryKey\(\)/);
+  assert.match(schema, /expiresAt: integer\("expires_at"\)/);
+  assert.match(revocationMigration, /CREATE TABLE `session_revocations`/);
+  assert.match(revocationMigration, /`expires_at` integer NOT NULL/);
+  assert.match(journalMigrations, /0008_serious_phantom_reporter/);
+});
