@@ -4,6 +4,16 @@ import handler from "vinext/server/app-router-entry";
 
 const DEVICE_FILES_ENABLED_KEY = "device_files_enabled";
 
+// Shared device files are readable by anyone holding the link and are served
+// from the journal's own origin, so an uploaded .html would otherwise run as
+// first-party script. Only media that cannot execute stays inline, everything
+// else downloads, and the CSP defangs whatever still renders as a document.
+const INLINE_SAFE_PREFIXES = ["audio/", "image/", "video/"];
+const INLINE_SAFE_TYPES = ["text/plain"];
+const NEVER_INLINE_TYPES = ["image/svg+xml"];
+const DEVICE_FILE_CSP =
+  "default-src 'none'; img-src 'self' blob: data:; media-src 'self' blob: data:; sandbox; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
@@ -96,6 +106,23 @@ function headerFilename(filename: string) {
   return filename.replace(/["\\\r\n]/g, "_");
 }
 
+function isInlineSafeContentType(contentType: string) {
+  const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+
+  if (!type || NEVER_INLINE_TYPES.includes(type)) {
+    return false;
+  }
+
+  return (
+    INLINE_SAFE_TYPES.includes(type) || INLINE_SAFE_PREFIXES.some((prefix) => type.startsWith(prefix))
+  );
+}
+
+function deviceContentDisposition(filename: string, contentType: string) {
+  const disposition = isInlineSafeContentType(contentType) ? "inline" : "attachment";
+  return `${disposition}; filename="${headerFilename(filename)}"`;
+}
+
 async function areDeviceFilesEnabled(env: Env) {
   const setting = await env.DB.prepare(
     "SELECT value FROM auth_settings WHERE key = ?1 LIMIT 1",
@@ -158,11 +185,14 @@ function parseDeviceRange(rangeHeader: string | null, size: number): DeviceByteR
 function deviceObjectHeaders(file: DeviceFileRow, object: R2Object, contentLength: number) {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
+  const contentType =
+    file.content_type || headers.get("Content-Type") || "application/octet-stream";
   headers.set("Accept-Ranges", "bytes");
   headers.set("Cache-Control", "private, max-age=60");
-  headers.set("Content-Disposition", `inline; filename="${headerFilename(file.filename)}"`);
+  headers.set("Content-Disposition", deviceContentDisposition(file.filename, contentType));
   headers.set("Content-Length", String(contentLength));
-  headers.set("Content-Type", file.content_type || headers.get("Content-Type") || "application/octet-stream");
+  headers.set("Content-Security-Policy", DEVICE_FILE_CSP);
+  headers.set("Content-Type", contentType);
   headers.set("ETag", object.httpEtag);
   headers.set("X-Content-Type-Options", "nosniff");
   return headers;
@@ -171,11 +201,13 @@ function deviceObjectHeaders(file: DeviceFileRow, object: R2Object, contentLengt
 function legacyDeviceFileHeaders(file: DeviceFileRow) {
   const body = file.content ?? "";
   const etag = `"device-file-${file.updated_at}-${file.size}"`;
+  const contentType = file.content_type || "text/plain; charset=utf-8";
   return new Headers({
     "Cache-Control": "private, max-age=60",
-    "Content-Disposition": `inline; filename="${headerFilename(file.filename)}"`,
+    "Content-Disposition": deviceContentDisposition(file.filename, contentType),
     "Content-Length": String(new TextEncoder().encode(body).byteLength),
-    "Content-Type": file.content_type || "text/plain; charset=utf-8",
+    "Content-Security-Policy": DEVICE_FILE_CSP,
+    "Content-Type": contentType,
     ETag: etag,
     "X-Content-Type-Options": "nosniff",
   });

@@ -568,3 +568,24 @@ test("revokes sessions on logout and blocks cross-site logout", async () => {
   assert.match(revocationMigration, /`expires_at` integer NOT NULL/);
   assert.match(journalMigrations, /0008_serious_phantom_reporter/);
 });
+
+test("serves shared device files without an inline HTML foothold", async () => {
+  const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+
+  // Only media that cannot execute script stays inline; everything else downloads.
+  assert.match(worker, /function deviceContentDisposition/);
+  assert.match(worker, /function isInlineSafeContentType/);
+  assert.match(worker, /NEVER_INLINE_TYPES = \["image\/svg\+xml"\]/);
+  assert.match(worker, /INLINE_SAFE_PREFIXES = \["audio\/", "image\/", "video\/"\]/);
+  assert.match(worker, /INLINE_SAFE_TYPES = \["text\/plain"\]/);
+  assert.match(worker, /attachment/);
+  assert.doesNotMatch(worker, /`inline; filename=/);
+
+  // A locked-down CSP neutralizes anything that still renders as a document.
+  assert.match(worker, /DEVICE_FILE_CSP/);
+  assert.match(worker, /default-src 'none'/);
+  assert.match(worker, /sandbox/);
+  assert.match(worker, /frame-ancestors 'none'/);
+  assert.match(worker, /headers\.set\("Content-Security-Policy", DEVICE_FILE_CSP\)/);
+  assert.match(worker, /X-Content-Type-Options/);
+});
