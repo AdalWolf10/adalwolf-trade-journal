@@ -1,14 +1,15 @@
 import { env } from "cloudflare:workers";
-import { eq } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { getDb } from "@/db";
-import { authAttempts, authSettings } from "@/db/schema";
+import { authAttempts, authSettings, sessionRevocations } from "@/db/schema";
 
 export const SESSION_COOKIE = "exit_journal_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 type SessionPayload = {
   exp: number;
+  jti: string;
   sub: string;
 };
 
@@ -19,6 +20,8 @@ type AuthAttempt = {
 };
 
 type AttemptStore = "d1" | "memory";
+
+type RevocationResult = "revoked" | "unknown-session" | "failed";
 
 type ThrottleDecision =
   | {
@@ -40,7 +43,9 @@ const PASSWORD_HASH_BITS = 256;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_LOCK_MS = 15 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 5;
+const SESSION_ID_BYTES = 18;
 const memoryAttempts = new Map<string, AuthAttempt>();
+const memoryRevocations = new Map<string, number>();
 
 export function isAuthConfigured() {
   return Boolean(
@@ -64,8 +69,31 @@ export async function isAuthenticatedRequest(request: Request) {
     return false;
   }
 
-  const token = parseCookieHeader(request.headers.get("cookie"))[SESSION_COOKIE];
-  return Boolean(await verifySessionToken(token));
+  return Boolean(await verifySessionToken(readSessionToken(request)));
+}
+
+export function readSessionToken(request: Request) {
+  return parseCookieHeader(request.headers.get("cookie"))[SESSION_COOKIE] ?? "";
+}
+
+/**
+ * Rejects state-changing requests that a third-party page triggered. Browsers
+ * always send `Origin` on cross-site POSTs, so a request that omits both
+ * `Origin` and `Referer` is treated as untrusted rather than assumed local.
+ */
+export function isSameOriginRequest(request: Request) {
+  const target = new URL(request.url);
+  const origin = request.headers.get("origin") ?? request.headers.get("referer") ?? "";
+  if (!origin) {
+    return false;
+  }
+
+  try {
+    const candidate = new URL(origin);
+    return candidate.protocol === target.protocol && candidate.host === target.host;
+  } catch {
+    return false;
+  }
 }
 
 export async function requireAuthenticatedRequest(request: Request) {
@@ -207,11 +235,51 @@ export async function clearLoginThrottle(identifier: string) {
 export async function createSessionToken(username: string) {
   const payload: SessionPayload = {
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+    jti: makeSessionId(),
     sub: username,
   };
   const encodedPayload = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
   const signature = await sign(encodedPayload);
   return `${encodedPayload}.${signature}`;
+}
+
+/**
+ * Signing out has to outlive the cookie: the token stays valid for its whole
+ * TTL once it leaks, so record its id and reject it on every later request.
+ * Reports "failed" when the revocation could not be stored, so the caller can
+ * tell the user their session is still live somewhere.
+ */
+export async function revokeSessionToken(token: string): Promise<RevocationResult> {
+  const payload = await verifySessionToken(token);
+  if (!payload) {
+    // Already expired, already revoked, or not ours: nothing left to revoke.
+    return "unknown-session";
+  }
+
+  const now = Date.now();
+  const revocation = {
+    expiresAt: payload.exp * 1000,
+    jti: payload.jti,
+    revokedAt: now,
+  };
+
+  try {
+    await getDb()
+      .insert(sessionRevocations)
+      .values(revocation)
+      .onConflictDoNothing({ target: sessionRevocations.jti });
+  } catch (error) {
+    if (!isBootstrapStorageError(error)) {
+      return "failed";
+    }
+
+    // The revocation table is not deployed yet; hold it for this isolate.
+    memoryRevocations.set(revocation.jti, revocation.expiresAt);
+    return "revoked";
+  }
+
+  await purgeExpiredRevocations(now);
+  return "revoked";
 }
 
 export function makeSessionCookie(token: string, requestUrl: string) {
@@ -244,11 +312,55 @@ async function verifySessionToken(token: string | undefined) {
     return null;
   }
 
-  if (!payload.sub || payload.exp <= Math.floor(Date.now() / 1000)) {
+  // Sessions minted before revocation existed carry no id, so they can never be
+  // signed out. Retire them and make the browser log in once more.
+  if (!payload.sub || !payload.jti || payload.exp <= Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+
+  if (await isSessionRevoked(payload.jti)) {
     return null;
   }
 
   return payload;
+}
+
+function makeSessionId() {
+  const bytes = new Uint8Array(SESSION_ID_BYTES);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+async function isSessionRevoked(jti: string) {
+  try {
+    const [revoked] = await getDb()
+      .select({ jti: sessionRevocations.jti })
+      .from(sessionRevocations)
+      .where(eq(sessionRevocations.jti, jti))
+      .limit(1);
+    return Boolean(revoked);
+  } catch (error) {
+    if (isBootstrapStorageError(error)) {
+      return memoryRevocations.has(jti);
+    }
+
+    // Fail closed: an unreadable revocation list must not grant access.
+    return true;
+  }
+}
+
+async function purgeExpiredRevocations(now: number) {
+  memoryRevocations.forEach((expiresAt, jti) => {
+    if (expiresAt <= now) {
+      memoryRevocations.delete(jti);
+    }
+  });
+
+  try {
+    await getDb().delete(sessionRevocations).where(lt(sessionRevocations.expiresAt, now));
+  } catch {
+    // Housekeeping only; an expired row is already rejected by the exp check.
+  }
 }
 
 async function sign(value: string) {
@@ -461,7 +573,10 @@ function isMissingTableError(error: unknown) {
     error instanceof Error
       ? `${error.message}\n${error.cause instanceof Error ? error.cause.message : ""}`
       : String(error);
-  return message.includes("no such table") && /auth_settings|auth_attempts/.test(message);
+  return (
+    message.includes("no such table") &&
+    /auth_settings|auth_attempts|session_revocations/.test(message)
+  );
 }
 
 function isBootstrapStorageError(error: unknown) {
