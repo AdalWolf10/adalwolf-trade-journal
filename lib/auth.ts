@@ -76,6 +76,26 @@ export function readSessionToken(request: Request) {
   return parseCookieHeader(request.headers.get("cookie"))[SESSION_COOKIE] ?? "";
 }
 
+/**
+ * Rejects state-changing requests that a third-party page triggered. Browsers
+ * always send `Origin` on cross-site POSTs, so a request that omits both
+ * `Origin` and `Referer` is treated as untrusted rather than assumed local.
+ */
+export function isSameOriginRequest(request: Request) {
+  const target = new URL(request.url);
+  const origin = request.headers.get("origin") ?? request.headers.get("referer") ?? "";
+  if (!origin) {
+    return false;
+  }
+
+  try {
+    const candidate = new URL(origin);
+    return candidate.protocol === target.protocol && candidate.host === target.host;
+  } catch {
+    return false;
+  }
+}
+
 export async function requireAuthenticatedRequest(request: Request) {
   if (await isAuthenticatedRequest(request)) {
     return null;

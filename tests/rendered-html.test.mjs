@@ -525,7 +525,7 @@ test("wires the hosted exit journal data model", async () => {
   await assert.rejects(access(new URL("app/_sites-preview", templateRoot)));
 });
 
-test("revokes sessions on logout", async () => {
+test("revokes sessions on logout and blocks cross-site logout", async () => {
   const [auth, logout, schema, revocationMigration, journalMigrations] = await Promise.all([
     readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/auth/logout/route.ts", import.meta.url), "utf8"),
@@ -546,12 +546,15 @@ test("revokes sessions on logout", async () => {
   assert.match(auth, /sessionRevocations/);
   assert.match(auth, /purgeExpiredRevocations/);
   assert.match(auth, /export function readSessionToken/);
+  assert.match(auth, /export function isSameOriginRequest/);
 
   // An unreadable revocation list must not hand out access.
   assert.match(auth, /Fail closed: an unreadable revocation list must not grant access\./);
   assert.match(auth, /session_revocations/);
 
-  // The logout route requires a session and revokes it server-side.
+  // The logout route enforces same-origin, requires a session, and revokes it.
+  assert.match(logout, /isSameOriginRequest\(request\)/);
+  assert.match(logout, /status: 403/);
   assert.match(logout, /readSessionToken\(request\)/);
   assert.match(logout, /status: 401/);
   assert.match(logout, /await revokeSessionToken\(token\)/);
