@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { safeDeviceFileContentDisposition } from "../lib/device-file-security";
 
 const DEVICE_FILES_ENABLED_KEY = "device_files_enabled";
 
@@ -92,10 +93,6 @@ function parseDeviceFilePath(pathname: string) {
   }
 }
 
-function headerFilename(filename: string) {
-  return filename.replace(/["\\\r\n]/g, "_");
-}
-
 async function areDeviceFilesEnabled(env: Env) {
   const setting = await env.DB.prepare(
     "SELECT value FROM auth_settings WHERE key = ?1 LIMIT 1",
@@ -160,7 +157,10 @@ function deviceObjectHeaders(file: DeviceFileRow, object: R2Object, contentLengt
   object.writeHttpMetadata(headers);
   headers.set("Accept-Ranges", "bytes");
   headers.set("Cache-Control", "private, max-age=60");
-  headers.set("Content-Disposition", `inline; filename="${headerFilename(file.filename)}"`);
+  headers.set(
+    "Content-Disposition",
+    safeDeviceFileContentDisposition(file.filename, file.content_type),
+  );
   headers.set("Content-Length", String(contentLength));
   headers.set("Content-Type", file.content_type || headers.get("Content-Type") || "application/octet-stream");
   headers.set("ETag", object.httpEtag);
@@ -173,7 +173,7 @@ function legacyDeviceFileHeaders(file: DeviceFileRow) {
   const etag = `"device-file-${file.updated_at}-${file.size}"`;
   return new Headers({
     "Cache-Control": "private, max-age=60",
-    "Content-Disposition": `inline; filename="${headerFilename(file.filename)}"`,
+    "Content-Disposition": safeDeviceFileContentDisposition(file.filename, file.content_type),
     "Content-Length": String(new TextEncoder().encode(body).byteLength),
     "Content-Type": file.content_type || "text/plain; charset=utf-8",
     ETag: etag,

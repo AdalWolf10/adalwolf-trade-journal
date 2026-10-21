@@ -2,13 +2,14 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { getDb } from "@/db";
-import { authAttempts, authSettings } from "@/db/schema";
+import { authAttempts, authSettings, sessionRevocations } from "@/db/schema";
 
 export const SESSION_COOKIE = "exit_journal_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 type SessionPayload = {
   exp: number;
+  jti: string;
   sub: string;
 };
 
@@ -64,8 +65,21 @@ export async function isAuthenticatedRequest(request: Request) {
     return false;
   }
 
-  const token = parseCookieHeader(request.headers.get("cookie"))[SESSION_COOKIE];
+  const token = readSessionToken(request);
   return Boolean(await verifySessionToken(token));
+}
+
+export function readSessionToken(request: Request) {
+  return parseCookieHeader(request.headers.get("cookie"))[SESSION_COOKIE];
+}
+
+export function isSameOriginRequest(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin) {
+    return origin === new URL(request.url).origin;
+  }
+
+  return request.headers.get("sec-fetch-site") === "same-origin";
 }
 
 export async function requireAuthenticatedRequest(request: Request) {
@@ -207,6 +221,7 @@ export async function clearLoginThrottle(identifier: string) {
 export async function createSessionToken(username: string) {
   const payload: SessionPayload = {
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+    jti: crypto.randomUUID(),
     sub: username,
   };
   const encodedPayload = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
@@ -222,7 +237,40 @@ export function makeExpiredSessionCookie(requestUrl: string) {
   return serializeCookie(SESSION_COOKIE, "", requestUrl, 0);
 }
 
+export async function revokeSessionToken(token: string | undefined) {
+  const payload = await decodeSessionToken(token);
+  if (!payload) {
+    return false;
+  }
+
+  try {
+    await getDb()
+      .insert(sessionRevocations)
+      .values({
+        expiresAt: payload.exp,
+        jti: payload.jti,
+        revokedAt: Math.floor(Date.now() / 1000),
+      })
+      .onConflictDoNothing();
+    return true;
+  } catch (error) {
+    if (isBootstrapStorageError(error)) {
+      throw new Error("The security database is not ready yet. Publish the latest migration first.");
+    }
+    throw error;
+  }
+}
+
 async function verifySessionToken(token: string | undefined) {
+  const payload = await decodeSessionToken(token);
+  if (!payload || (await isSessionRevoked(payload.jti))) {
+    return null;
+  }
+
+  return payload;
+}
+
+async function decodeSessionToken(token: string | undefined) {
   if (!token) {
     return null;
   }
@@ -244,11 +292,27 @@ async function verifySessionToken(token: string | undefined) {
     return null;
   }
 
-  if (!payload.sub || payload.exp <= Math.floor(Date.now() / 1000)) {
+  if (!payload.jti || !payload.sub || payload.exp <= Math.floor(Date.now() / 1000)) {
     return null;
   }
 
   return payload;
+}
+
+async function isSessionRevoked(jti: string) {
+  try {
+    const [revocation] = await getDb()
+      .select({ jti: sessionRevocations.jti })
+      .from(sessionRevocations)
+      .where(eq(sessionRevocations.jti, jti))
+      .limit(1);
+    return Boolean(revocation);
+  } catch (error) {
+    if (isBootstrapStorageError(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function sign(value: string) {
@@ -461,7 +525,10 @@ function isMissingTableError(error: unknown) {
     error instanceof Error
       ? `${error.message}\n${error.cause instanceof Error ? error.cause.message : ""}`
       : String(error);
-  return message.includes("no such table") && /auth_settings|auth_attempts/.test(message);
+  return (
+    message.includes("no such table") &&
+    /auth_settings|auth_attempts|session_revocations/.test(message)
+  );
 }
 
 function isBootstrapStorageError(error: unknown) {

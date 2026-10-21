@@ -2,6 +2,8 @@
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useJournalTheme } from "../useJournalTheme";
+import JournalNavigation from "../JournalNavigation";
+import { Moon, RefreshCw, Sun } from "lucide-react";
 
 type DeviceFolder = {
   id: string;
@@ -306,7 +308,10 @@ export default function DeviceFilesClient() {
     : "Loading storage";
 
   return (
-    <main className="device-page-shell" data-theme={theme}>
+    <main className="journal-shell" data-theme={theme}>
+      <JournalNavigation active="files" />
+      <div className="journal-workspace">
+      <div className="device-page-shell">
       <header className="device-page-header">
         <div>
           <p className="eyebrow">Data</p>
@@ -319,16 +324,10 @@ export default function DeviceFilesClient() {
             aria-label="Toggle color theme"
             onClick={toggleTheme}
           >
-            {theme === "dark" ? "Light" : "Dark"}
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
-          <a className="utility-button" href="/journal/home">
-            Home
-          </a>
-          <a className="utility-button" href="/journal">
-            Journal
-          </a>
           <button className="utility-button" type="button" onClick={() => void loadDeviceFiles()}>
-            Refresh
+            <RefreshCw size={15} aria-hidden="true" /> Refresh
           </button>
         </div>
       </header>
@@ -403,7 +402,7 @@ export default function DeviceFilesClient() {
         <strong>{isUploading ? "Please keep this page open" : canUpload ? "Choose Files" : "Uploads blocked"}</strong>
       </label>
 
-      {notice ? <p className="device-page-notice">{notice}</p> : null}
+      {notice ? <p className="device-page-notice" role="status">{notice}</p> : null}
 
       <section className="device-file-table-shell" aria-busy={isLoading || isUploading}>
         <div className="device-file-table-header">
@@ -469,6 +468,8 @@ export default function DeviceFilesClient() {
           </table>
         </div>
       </section>
+      </div>
+      </div>
     </main>
   );
 }

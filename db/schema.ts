@@ -65,6 +65,12 @@ export const authAttempts = sqliteTable("auth_attempts", {
   lockedUntil: integer("locked_until").notNull(),
 });
 
+export const sessionRevocations = sqliteTable("session_revocations", {
+  jti: text("jti").primaryKey(),
+  expiresAt: integer("expires_at").notNull(),
+  revokedAt: integer("revoked_at").notNull(),
+});
+
 export const deviceFolders = sqliteTable(
   "device_folders",
   {

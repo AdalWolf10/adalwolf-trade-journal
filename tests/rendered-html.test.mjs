@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
+const navigation = await readFile(new URL("../app/journal/JournalNavigation.tsx", import.meta.url), "utf8");
 
 test("defines the exit strategy journal shell", async () => {
   const [home, journal, layout] = await Promise.all([
@@ -10,18 +11,18 @@ test("defines the exit strategy journal shell", async () => {
     readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   ]);
-  const source = home + journal + layout;
+  const source = home + journal + layout + navigation;
 
   assert.match(source, /Welcome/);
   assert.match(source, /Please login to continue/);
   assert.match(source, /suppressHydrationWarning/);
-  assert.match(source, /Exit Strategy Journal/);
+  assert.match(source, /Trading journal/);
   assert.match(source, /Net Actual R/);
   assert.match(source, /Profit Factor/);
   assert.match(source, /Journal Score/);
   assert.match(source, /Journal score breakdown/);
   assert.match(source, /Private Home/);
-  assert.match(source, /Command Center/);
+  assert.doesNotMatch(source, /Command Center|Clean review, fast logging, safe backups/);
   assert.match(source, /home-tile-grid/);
   assert.match(source, /Copy Last/);
   assert.match(source, /quickTradeTemplates/);
@@ -86,6 +87,9 @@ test("defines the exit strategy journal shell", async () => {
   assert.match(source, /data-menu-panel/);
   assert.match(source, /Export Current View/);
   assert.match(source, /AI Analysis Packet/);
+  assert.match(source, /Monthly Backup ZIP/);
+  assert.match(source, /createMonthlyBackupZip/);
+  assert.match(source, /Import Backup ZIP \(choose month\)/);
   assert.match(source, /AI_REVIEW_PROMPT\.md/);
   assert.match(source, /ai-analysis\.json/);
   assert.match(source, /tradeQualityAnalysis/);
@@ -210,6 +214,7 @@ test("wires the hosted exit journal data model", async () => {
     richTradeMigration,
     dailyJournalMigration,
     trashMigration,
+    securityMigration,
   ] =
     await Promise.all([
       readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
@@ -244,6 +249,7 @@ test("wires the hosted exit journal data model", async () => {
       readFile(new URL("../drizzle/0005_wide_human_cannonball.sql", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0006_ordinary_mister_sinister.sql", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0007_blue_susan_delgado.sql", import.meta.url), "utf8"),
+      readFile(new URL("../drizzle/0008_lush_killraven.sql", import.meta.url), "utf8"),
     ]);
 
   assert.match(journal, /fetch\("\/api\/trades"/);
@@ -259,7 +265,7 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(journal, /\/journal\/device-files/);
   assert.match(journal, /\/journal\/quality/);
   assert.match(journal, /\/journal\/trash/);
-  assert.match(journal, /\/journal\/home/);
+  assert.match(navigation, /\/journal\/home/);
   assert.match(journal, /initialView = "dashboard"/);
   assert.match(journal, /JournalShellView = "dashboard" \| "home" \| "trash"/);
   assert.match(journal, /homeTiles/);
@@ -371,12 +377,21 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(auth, /JOURNAL_PASSWORD_HASH/);
   assert.match(auth, /PBKDF2/);
   assert.match(auth, /LOGIN_MAX_FAILURES/);
+  assert.match(auth, /jti: crypto\.randomUUID\(\)/);
+  assert.match(auth, /sessionRevocations/);
+  assert.match(auth, /export function isSameOriginRequest/);
+  assert.match(auth, /export function readSessionToken/);
+  assert.match(auth, /export async function revokeSessionToken/);
+  assert.match(auth, /isSessionRevoked/);
   assert.match(login, /Set-Cookie/);
   assert.match(login, /checkLoginThrottle/);
   assert.match(login, /recordFailedLogin/);
   assert.match(passwordRoute, /updateStoredPassword/);
   assert.match(passwordRoute, /validateCurrentPassword/);
   assert.match(logout, /makeExpiredSessionCookie/);
+  assert.match(logout, /isSameOriginRequest\(request\)/);
+  assert.match(logout, /revokeSessionToken/);
+  assert.match(logout, /status: 403/);
   assert.match(route, /requireAuthenticatedRequest/);
   assert.match(route, /actualR = beHit === "No" \? -1/);
   assert.match(pageRoute, /title: "Dashboard"/);
@@ -426,6 +441,7 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(schema, /exitTrades/);
   assert.match(schema, /authSettings/);
   assert.match(schema, /authAttempts/);
+  assert.match(schema, /sessionRevocations/);
   assert.match(schema, /dailyJournals/);
   assert.match(schema, /journalTrashItems/);
   assert.match(schema, /sqliteTable\("exit_trades"/);
@@ -471,6 +487,8 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(deviceHelpers, /getDeviceFilesBucket/);
   assert.match(deviceHelpers, /put\(objectKey, upload\.body/);
   assert.match(deviceHelpers, /application\/octet-stream/);
+  assert.match(deviceHelpers, /export function deviceFileContentDisposition/);
+  assert.match(deviceHelpers, /safeDeviceFileContentDisposition/);
   assert.match(deviceHelpers, /objectKey/);
   assert.match(deviceHelpers, /sharedOrigin/);
   assert.doesNotMatch(deviceHelpers, /MAX_DEVICE_FILE_BYTES|Device files must be 512 KB|JSON and other text/);
@@ -490,6 +508,8 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(worker, /device_folders\.token/);
   assert.match(worker, /device_folders\.short_code/);
   assert.match(worker, /Content-Disposition/);
+  assert.match(worker, /safeDeviceFileContentDisposition/);
+  assert.doesNotMatch(worker, /Content-Disposition", `inline; filename=/);
   assert.match(wrangler, /"r2_buckets"/);
   assert.match(wrangler, /"DEVICE_FILES_STORAGE_LIMIT_BYTES": "10522669875"/);
   assert.match(wrangler, /"binding": "DEVICE_FILES"/);
@@ -517,6 +537,9 @@ test("wires the hosted exit journal data model", async () => {
   assert.match(trashMigration, /CREATE TABLE `journal_trash_items`/);
   assert.match(trashMigration, /`item_type` text NOT NULL/);
   assert.match(trashMigration, /`purge_after` integer NOT NULL/);
+  assert.match(securityMigration, /CREATE TABLE `session_revocations`/);
+  assert.match(securityMigration, /`jti` text PRIMARY KEY NOT NULL/);
+  assert.match(securityMigration, /`expires_at` integer NOT NULL/);
   assert.doesNotMatch(deviceHelpers + worker, /Math\.random/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(journal + layout, /_sites-preview|Starter Project|codex-preview/);

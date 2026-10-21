@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useJournalTheme } from "../useJournalTheme";
+import JournalNavigation from "../JournalNavigation";
+import FilterDisclosure from "../FilterDisclosure";
+import { ChevronLeft, ChevronRight, Moon, RefreshCw, Sun } from "lucide-react";
 
 type BeHit = "Yes" | "No";
 type ResultFilter = "all" | "flat" | "loss" | "win";
@@ -1148,7 +1151,10 @@ export default function QualityPageClient() {
   }
 
   return (
-    <main className="device-page-shell quality-page-shell" data-theme={theme}>
+    <main className="journal-shell" data-theme={theme}>
+      <JournalNavigation active="quality" />
+      <div className="journal-workspace">
+      <div className="device-page-shell quality-page-shell">
       <header className="device-page-header">
         <div>
           <p className="eyebrow">Analytics</p>
@@ -1156,23 +1162,17 @@ export default function QualityPageClient() {
         </div>
         <div className="device-page-header-actions">
           <button className="utility-button" type="button" aria-label="Toggle color theme" onClick={toggleTheme}>
-            {theme === "dark" ? "Light" : "Dark"}
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
-          <a className="utility-button" href="/journal/home">
-            Home
-          </a>
-          <a className="utility-button" href="/journal">
-            Journal
-          </a>
           <button className="utility-button" type="button" onClick={() => void loadQualityData()}>
-            Refresh
+            <RefreshCw size={15} aria-hidden="true" /> Refresh
           </button>
         </div>
       </header>
 
       <section className="month-switcher quality-month-switcher" aria-label="Month navigation">
         <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
-          &lt;
+          <ChevronLeft size={16} />
         </button>
         <nav className="month-tabs" aria-label="Month tabs">
           {monthTabs.map((month) => (
@@ -1189,7 +1189,7 @@ export default function QualityPageClient() {
           ))}
         </nav>
         <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
-          &gt;
+          <ChevronRight size={16} />
         </button>
         <button className="utility-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
           This month
@@ -1227,7 +1227,8 @@ export default function QualityPageClient() {
         ) : null}
       </section>
 
-      <section className="journal-filter-panel quality-filter-panel" aria-label="Trade quality filters">
+      <FilterDisclosure count={activeFilterCount} label="Trade quality filters">
+      <section className="journal-filter-panel quality-filter-panel">
         <div className="filter-panel-heading">
           <div>
             <p className="eyebrow">Filters</p>
@@ -1316,10 +1317,11 @@ export default function QualityPageClient() {
           </label>
         </div>
       </section>
+      </FilterDisclosure>
 
       {notice ? <p className="notice dashboard-notice">{notice}</p> : null}
 
-      <section className="metric-grid quality-page-metrics" aria-label="Trade quality summary">
+      <section className={`metric-grid quality-page-metrics ${isLoading ? "is-loading" : ""}`} aria-busy={isLoading} aria-label="Trade quality summary">
         <article className="metric-card primary-metric">
           <span>Quality Score</span>
           <strong>{currentViewQuality.toFixed(1)}</strong>
@@ -1345,12 +1347,12 @@ export default function QualityPageClient() {
         <article className="metric-card">
           <span>Best Setup</span>
           <strong>{bestSetup?.label ?? "--"}</strong>
-          <small>{bestSetup ? `${bestSetup.score.toFixed(1)} quality` : "No setup data"}</small>
+          <small>{bestSetup ? `${bestSetup.trades} trades · ${bestSetup.score.toFixed(1)} quality` : "No setup data"}</small>
         </article>
         <article className="metric-card">
           <span>Watch Setup</span>
           <strong>{weakestSetup?.label ?? "--"}</strong>
-          <small>{weakestSetup ? `${weakestSetup.score.toFixed(1)} quality` : "No setup data"}</small>
+          <small>{weakestSetup ? `${weakestSetup.trades} trades · ${weakestSetup.score.toFixed(1)} quality` : "No setup data"}</small>
         </article>
       </section>
 
@@ -1363,83 +1365,14 @@ export default function QualityPageClient() {
             </div>
             {renderQualityRows(quality.setups, "No setup quality data yet.")}
           </article>
-
-          <article className="quality-card quality-card-wide">
+<article className="quality-card quality-card-wide">
             <div className="quality-card-heading">
               <p className="eyebrow">Setup Analysis</p>
               <h3>Setup x Session</h3>
             </div>
             {renderQualityRows(quality.setupSessions, "No setup/session combinations yet.", 5)}
           </article>
-        </div>
-
-        <div className="quality-side-stack">
-          <article className="quality-card">
-            <div className="quality-card-heading">
-              <p className="eyebrow">Session</p>
-              <h3>Session Quality</h3>
-            </div>
-            {renderQualityRows(quality.sessions, "No session quality data yet.", 6)}
-          </article>
-
-          <article className="quality-card">
-            <div className="quality-card-heading">
-              <p className="eyebrow">Daily Review</p>
-              <h3>BE Day Outcome</h3>
-            </div>
-            {renderQualityRows(quality.beDays, "No breakeven day data yet.", 3)}
-          </article>
-        </div>
-
-        <div className="quality-three-stack">
-          <article className="quality-card">
-            <div className="quality-card-heading">
-              <p className="eyebrow">Psychology</p>
-              <h3>Discipline Pattern</h3>
-            </div>
-            {renderDisciplineRows(quality.discipline)}
-            {weakestDiscipline ? (
-              <p className="quality-card-note">
-                Lowest follow-through: {weakestDiscipline.label} at {percent(weakestDiscipline.rate)}.
-              </p>
-            ) : null}
-          </article>
-
-          <article className="quality-card">
-            <div className="quality-card-heading">
-              <p className="eyebrow">Emotion</p>
-              <h3>Main Emotion</h3>
-            </div>
-            <div className="quality-row-list">
-              {quality.emotions.slice(0, 8).map((row) => (
-                <div className="quality-row compact" key={row.label}>
-                  <div>
-                    <strong>{row.label}</strong>
-                    <small>
-                      {row.count} entries · {row.trades} linked trades · {percent(row.winRate)} win
-                    </small>
-                  </div>
-                  <div className="quality-row-metrics">
-                    <strong className={toneClass(row.total)}>{row.trades ? rValue(row.total) : "--"}</strong>
-                    <small>avg {row.trades ? rValue(row.average) : "--"}</small>
-                  </div>
-                </div>
-              ))}
-              {!quality.emotions.length ? <p className="empty-panel-note">No emotion data in narratives yet.</p> : null}
-            </div>
-          </article>
-
-          <article className="quality-card">
-            <div className="quality-card-heading">
-              <p className="eyebrow">Daily Review</p>
-              <h3>PA Rating Edge</h3>
-            </div>
-            {renderQualityRows(quality.paRatings, "No PA rating data yet.", 3)}
-          </article>
-        </div>
-
-        <div className="quality-wide-stack">
-          <article className="quality-card quality-card-wide">
+<article className="quality-card quality-card-wide">
             <div className="quality-card-heading">
               <p className="eyebrow">Tag Analysis</p>
               <h3>Tag Signals & Keywords</h3>
@@ -1462,8 +1395,7 @@ export default function QualityPageClient() {
               </div>
             ) : null}
           </article>
-
-          <article className="quality-card quality-card-wide">
+<article className="quality-card quality-card-wide">
             <div className="quality-card-heading">
               <p className="eyebrow">Weekday</p>
               <h3>Day Quality</h3>
@@ -1485,9 +1417,64 @@ export default function QualityPageClient() {
             </div>
           </article>
         </div>
-
         <div className="quality-side-stack">
           <article className="quality-card">
+            <div className="quality-card-heading">
+              <p className="eyebrow">Session</p>
+              <h3>Session Quality</h3>
+            </div>
+            {renderQualityRows(quality.sessions, "No session quality data yet.", 6)}
+          </article>
+<article className="quality-card">
+            <div className="quality-card-heading">
+              <p className="eyebrow">Daily Review</p>
+              <h3>BE Day Outcome</h3>
+            </div>
+            {renderQualityRows(quality.beDays, "No breakeven day data yet.", 3)}
+          </article>
+<article className="quality-card">
+            <div className="quality-card-heading">
+              <p className="eyebrow">Psychology</p>
+              <h3>Discipline Pattern</h3>
+            </div>
+            {renderDisciplineRows(quality.discipline)}
+            {weakestDiscipline ? (
+              <p className="quality-card-note">
+                Lowest follow-through: {weakestDiscipline.label} at {percent(weakestDiscipline.rate)}.
+              </p>
+            ) : null}
+          </article>
+<article className="quality-card">
+            <div className="quality-card-heading">
+              <p className="eyebrow">Emotion</p>
+              <h3>Main Emotion</h3>
+            </div>
+            <div className="quality-row-list">
+              {quality.emotions.slice(0, 8).map((row) => (
+                <div className="quality-row compact" key={row.label}>
+                  <div>
+                    <strong>{row.label}</strong>
+                    <small>
+                      {row.count} entries · {row.trades} linked trades · {percent(row.winRate)} win
+                    </small>
+                  </div>
+                  <div className="quality-row-metrics">
+                    <strong className={toneClass(row.total)}>{row.trades ? rValue(row.total) : "--"}</strong>
+                    <small>avg {row.trades ? rValue(row.average) : "--"}</small>
+                  </div>
+                </div>
+              ))}
+              {!quality.emotions.length ? <p className="empty-panel-note">No emotion data in narratives yet.</p> : null}
+            </div>
+          </article>
+<article className="quality-card">
+            <div className="quality-card-heading">
+              <p className="eyebrow">Daily Review</p>
+              <h3>PA Rating Edge</h3>
+            </div>
+            {renderQualityRows(quality.paRatings, "No PA rating data yet.", 3)}
+          </article>
+<article className="quality-card">
             <div className="quality-card-heading">
               <p className="eyebrow">Daily Review</p>
               <h3>Setup Rating Edge</h3>
@@ -1496,6 +1483,8 @@ export default function QualityPageClient() {
           </article>
         </div>
       </section>
+      </div>
+      </div>
     </main>
   );
 }

@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { getDb } from "@/db";
 import { authSettings, deviceFiles, deviceFolders } from "@/db/schema";
+import { safeDeviceFileContentDisposition } from "@/lib/device-file-security";
 
 const DEFAULT_DEVICE_FOLDER_ID = "shared-device-files";
 const DEFAULT_DEVICE_FOLDER_NAME = "Shared Device Files";
@@ -131,6 +132,10 @@ export function inferDeviceContentType(filename: string, explicitType = "") {
   }
 
   return "application/octet-stream";
+}
+
+export function deviceFileContentDisposition(filename: string, contentType: string) {
+  return safeDeviceFileContentDisposition(filename, contentType);
 }
 
 export async function parseDeviceFileUpload(request: Request): Promise<DeviceFileUpload> {
@@ -278,7 +283,7 @@ export async function storeDeviceFile(upload: DeviceFileUpload, folder?: DeviceF
 
   const storedObject = await getDeviceFilesBucket().put(objectKey, upload.body, {
     httpMetadata: {
-      contentDisposition: `inline; filename="${headerFilename(upload.filename)}"`,
+      contentDisposition: deviceFileContentDisposition(upload.filename, upload.contentType),
       contentType: upload.contentType,
     },
   });
@@ -479,10 +484,6 @@ function parseUploadedSize(value: string | null) {
 
 function makeDeviceObjectKey(folderId: string, fileId: string, uploadId: string, filename: string) {
   return `device-files/${encodeURIComponent(folderId)}/${encodeURIComponent(fileId)}/${encodeURIComponent(uploadId)}/${encodeURIComponent(filename)}`;
-}
-
-function headerFilename(filename: string) {
-  return filename.replace(/["\\\r\n]/g, "_");
 }
 
 function sharedOrigin(request: Request) {

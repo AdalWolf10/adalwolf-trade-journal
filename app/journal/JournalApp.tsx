@@ -14,6 +14,9 @@ import {
 } from "react";
 import type { CSSProperties } from "react";
 import { useJournalTheme } from "./useJournalTheme";
+import JournalNavigation from "./JournalNavigation";
+import FilterDisclosure from "./FilterDisclosure";
+import { ChevronLeft, ChevronRight, Database, Minus, Moon, Plus, Sun, X } from "lucide-react";
 
 type BeHit = "Yes" | "No";
 
@@ -2768,16 +2771,22 @@ function backupDailyJournalRecord(journal: DailyJournal, sourceMap: Map<string, 
   };
 }
 
-function backupReadmeMarkdown(exportedAt: string, attachmentCount: number, skippedCount: number) {
+function backupReadmeMarkdown(
+  exportedAt: string,
+  attachmentCount: number,
+  skippedCount: number,
+  rangeLabel: string,
+) {
   return [
     "# Adalwolf Trade Journal Backup",
     "",
     `Exported at: ${exportedAt}`,
+    `Backup range: ${rangeLabel}`,
     "",
     "This ZIP is a safety backup for the trading journal.",
     "",
     "Contents:",
-    "- `backup.json`: all trades, daily journals, attachment metadata, and backup paths.",
+    "- `backup.json`: selected trades, daily journals, attachment metadata, and backup paths.",
     "- `ai-analysis.md`: plain-English analysis packet for ChatGPT, Codex, Claude, or another AI reviewer.",
     "- `complete-journal-export.xlsx`: spreadsheet workbook with raw data and calculated analysis sheets.",
     "- `attachments/`: downloaded screenshot and journal attachment files.",
@@ -3053,9 +3062,12 @@ async function createAiAnalysisZip(
   };
 }
 
-async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]) {
+async function createJournalBackupZip(
+  trades: ExitTrade[],
+  journals: DailyJournal[],
+  range: ActiveReportRange,
+) {
   const exportedAt = new Date().toISOString();
-  const range: ActiveReportRange = { label: "All data", mode: "all" };
   const sources = assignBackupPaths(collectAttachmentSources(trades, journals));
   const sourceMap = attachmentsBySource(sources);
   const skippedAttachments: Array<{
@@ -3089,6 +3101,7 @@ async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]
     app: "Adalwolf Trade Journal",
     exportedAt,
     format: "adalwolf-journal-backup",
+    range,
     includes: {
       attachmentFiles: sources.length - skippedAttachments.length,
       authSettings: false,
@@ -3096,7 +3109,7 @@ async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]
       screenshots: true,
     },
     skippedAttachments,
-    version: "1.1",
+    version: "1.2",
     data: {
       dailyJournals: journals.map((journal) => backupDailyJournalRecord(journal, sourceMap)),
       trades: trades.map((trade) => backupTradeRecord(trade, sourceMap)),
@@ -3117,7 +3130,12 @@ async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]
   };
 
   files["backup.json"] = JSON.stringify(backup, null, 2);
-  files["README.md"] = backupReadmeMarkdown(exportedAt, sources.length - skippedAttachments.length, skippedAttachments.length);
+  files["README.md"] = backupReadmeMarkdown(
+    exportedAt,
+    sources.length - skippedAttachments.length,
+    skippedAttachments.length,
+    range.label,
+  );
   files["ai-analysis.md"] = aiAnalysisMarkdown(trades, journals, range, sources);
   files["complete-journal-export.xlsx"] = await createWorkbookXlsx(
     completeWorkbookSheets(trades, journals, range, sources),
@@ -3132,6 +3150,21 @@ async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]
     blob: createStoredZip(files, zipMime),
     skippedCount: skippedAttachments.length,
   };
+}
+
+async function createFullBackupZip(trades: ExitTrade[], journals: DailyJournal[]) {
+  return createJournalBackupZip(trades, journals, { label: "All data", mode: "all" });
+}
+
+async function createMonthlyBackupZip(trades: ExitTrade[], journals: DailyJournal[], month: string) {
+  const monthlyTrades = trades.filter((trade) => monthKey(trade.date) === month);
+  const monthlyJournals = journals.filter((journal) => monthKey(journal.date) === month);
+  return createJournalBackupZip(monthlyTrades, monthlyJournals, {
+    from: month,
+    label: monthLabel(month),
+    mode: "month",
+    to: month,
+  });
 }
 
 function zipLocalHeader(nameBytes: Uint8Array, size: number, checksum: number) {
@@ -3564,8 +3597,6 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   const [isDailyJournalLoading, setIsDailyJournalLoading] = useState(true);
   const [isDailyJournalSaving, setIsDailyJournalSaving] = useState(false);
   const [isDailyJournalAttachmentUploading, setIsDailyJournalAttachmentUploading] = useState(false);
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const [isPasswordSaving, setIsPasswordSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isTrashLoading, setIsTrashLoading] = useState(false);
@@ -3586,6 +3617,24 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   const dataMenuRef = useRef<HTMLDivElement | null>(null);
   const dailyJournalPasteHandlerRef = useRef<((event: globalThis.ClipboardEvent) => void) | null>(null);
   const selectedMonthTabRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const handlePanelLink = () => {
+      if (window.location.hash === "#new-trade") {
+        setIsEntryOpen(true);
+        window.history.replaceState(null, "", window.location.pathname);
+      } else if (window.location.hash === "#security") {
+        setIsSecurityOpen(true);
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    };
+    const timer = window.setTimeout(handlePanelLink, 0);
+    window.addEventListener("hashchange", handlePanelLink);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("hashchange", handlePanelLink);
+    };
+  }, []);
 
   const handleUnauthorized = useCallback((response: Response) => {
     if (response.status === 401) {
@@ -3737,6 +3786,8 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
     () => sortedTrades.filter((trade) => monthKey(trade.date) === selectedMonth),
     [selectedMonth, sortedTrades],
   );
+  const selectedMonthHasBackupData =
+    monthlyTrades.length > 0 || dailyJournals.some((journal) => monthKey(journal.date) === selectedMonth);
 
   const currentReportYear = currentMonthKey().slice(0, 4);
   const reportRange = useMemo<ActiveReportRange>(() => {
@@ -5255,8 +5306,32 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
     }
   }
 
-  async function exportJournal(format: "ai" | "backup" | "json" | "xlsx") {
+  async function exportJournal(format: "ai" | "backup" | "month-backup" | "json" | "xlsx") {
     setIsDataMenuOpen(false);
+
+    if (format === "month-backup") {
+      setIsSaving(true);
+      setNotice(`Preparing ${monthLabel(selectedMonth)} backup...`);
+      try {
+        const backup = await createMonthlyBackupZip(trades, dailyJournals, selectedMonth);
+        downloadBlob(`exit-journal-${selectedMonth}-backup-${currentDateKey()}.zip`, backup.blob);
+        markBackupExported();
+        setNotice(
+          `${monthLabel(selectedMonth)} backup exported with ${backup.attachmentCount} attachment${
+            backup.attachmentCount === 1 ? "" : "s"
+          }. Device Files were not included.${
+            backup.skippedCount
+              ? ` ${backup.skippedCount} attachment warning${backup.skippedCount === 1 ? "" : "s"}.`
+              : ""
+          }`,
+        );
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Unable to export monthly backup");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
 
     if (format === "backup") {
       setIsSaving(true);
@@ -5538,7 +5613,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
       const availableYears = restoreDataYears(availableMonths);
       const firstMonth = availableMonths[0] ?? selectedMonth;
       const lastMonth = availableMonths.at(-1) ?? selectedMonth;
-      setRestoreScopeMode("all");
+      setRestoreScopeMode(availableMonths.length === 1 ? "month" : "all");
       setRestoreMonth(lastMonth);
       setRestoreStartMonth(firstMonth);
       setRestoreEndMonth(lastMonth);
@@ -6205,110 +6280,12 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
   const previewImageStyle = attachmentPreviewImageStyle(attachmentZoom);
 
   return (
-    <main className={`journal-shell ${isNavCollapsed ? "nav-collapsed" : ""}`} data-theme={theme}>
-      <button
-        className={`mobile-nav-scrim ${isMobileNavOpen ? "show" : ""}`}
-        type="button"
-        aria-label="Close navigation"
-        onClick={() => setIsMobileNavOpen(false)}
-      />
-
-      <aside className={`app-sidebar ${isMobileNavOpen ? "mobile-open" : ""}`} aria-label="Journal navigation">
-        <div className="sidebar-brand">
-          <span className="brand-mark" aria-hidden="true">
-            AW
-          </span>
-          <div className="sidebar-brand-copy">
-            <strong>Adalwolf</strong>
-            <small>Exit Strategy Journal</small>
-          </div>
-        </div>
-
-        <button
-          className="sidebar-new-trade"
-          type="button"
-          onClick={() => {
-            openNewTrade();
-            setIsMobileNavOpen(false);
-          }}
-        >
-          <span aria-hidden="true">+</span>
-          <strong>New Trade</strong>
-        </button>
-
-        <nav className="sidebar-nav" aria-label="Primary sections">
-          <a className={isHomeView ? "active" : ""} href="/journal/home" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">H</span>
-            <strong>Home</strong>
-          </a>
-          <a className={!isHomeView && !isTrashView ? "active" : ""} href="/journal#dashboard-overview" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">D</span>
-            <strong>Dashboard</strong>
-          </a>
-          <a href="/journal#calendar" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">C</span>
-            <strong>Calendar</strong>
-          </a>
-          <a href="/journal#trades" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">T</span>
-            <strong>Trade Log</strong>
-          </a>
-          <a href="/journal#analytics" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">A</span>
-            <strong>Analytics</strong>
-          </a>
-          <a href="/journal/quality" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">Q</span>
-            <strong>Quality</strong>
-          </a>
-          <a href="/journal/device-files" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">F</span>
-            <strong>Device Files</strong>
-          </a>
-          <a className={isTrashView ? "active" : ""} href="/journal/trash" onClick={() => setIsMobileNavOpen(false)}>
-            <span aria-hidden="true">R</span>
-            <strong>Trash</strong>
-          </a>
-        </nav>
-
-        <div className="sidebar-footer">
-          <button
-            className="sidebar-nav-button"
-            type="button"
-            onClick={() => {
-              openSecurityDialog();
-              setIsMobileNavOpen(false);
-            }}
-          >
-            <span aria-hidden="true">S</span>
-            <strong>Security</strong>
-          </button>
-          <button className="sidebar-nav-button" type="button" onClick={() => void logout()}>
-            <span aria-hidden="true">L</span>
-            <strong>Logout</strong>
-          </button>
-          <button
-            className="sidebar-collapse-button"
-            type="button"
-            aria-label={isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            onClick={() => setIsNavCollapsed((current) => !current)}
-          >
-            {isNavCollapsed ? ">" : "<"}
-          </button>
-        </div>
-      </aside>
+    <main className="journal-shell" data-theme={theme}>
+      <JournalNavigation active={isHomeView ? "home" : isTrashView ? "trash" : "dashboard"} onNewTrade={openNewTrade} onSecurity={openSecurityDialog} onLogout={() => void logout()} />
 
       <div className="journal-workspace">
         <header className="topbar" aria-label="Trading journal header">
           <div className="topbar-title-group">
-            <button
-              className="mobile-menu-button"
-              type="button"
-              aria-label="Open navigation"
-              onClick={() => setIsMobileNavOpen(true)}
-            >
-              Menu
-            </button>
             <div>
               <p className="eyebrow">{isHomeView ? "Private Dashboard" : isTrashView ? "Safety" : "R Journal"}</p>
               <h1>{isHomeView ? "Private Home" : isTrashView ? "Recently Deleted" : "Trading Dashboard"}</h1>
@@ -6317,15 +6294,16 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
           </div>
           <div className="topbar-actions">
             <button
-              className="utility-button compact"
+              className="utility-button compact icon-button"
               type="button"
+              title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
               aria-label="Toggle color theme"
               onClick={toggleTheme}
             >
-              {theme === "dark" ? "Light" : "Dark"}
+              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
             <button className="primary-button compact" type="button" onClick={openNewTrade}>
-            New Trade
+            <Plus size={16} aria-hidden="true" /> New Trade
           </button>
           <div className="data-menu" ref={dataMenuRef}>
             <button
@@ -6335,7 +6313,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
               aria-haspopup="menu"
               onClick={() => setIsDataMenuOpen((current) => !current)}
             >
-              Data <span aria-hidden="true">▾</span>
+              <Database size={15} aria-hidden="true" /> Data <span aria-hidden="true">▾</span>
             </button>
             {isDataMenuOpen ? (
               <div className="data-menu-panel" role="menu" aria-label="Import and export data">
@@ -6357,7 +6335,8 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   </button>
                   <button
                     className="data-menu-item"
-                    disabled={isSaving}
+                    disabled={isSaving || !selectedMonthHasBackupData}
+                    title={selectedMonthHasBackupData ? undefined : `No journal data in ${monthLabel(selectedMonth)}`}
                     type="button"
                     role="menuitem"
                     onClick={() => void exportJournal("ai")}
@@ -6370,7 +6349,16 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                 </div>
                 <div className="data-menu-section">
                   <span className="data-menu-label">Backup</span>
-                  <small className="data-menu-note">All trades, daily journals, and screenshots</small>
+                  <small className="data-menu-note">Journal records and screenshots only. Device Files stay separate.</small>
+                  <button
+                    className="data-menu-item"
+                    disabled={isSaving}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void exportJournal("month-backup")}
+                  >
+                    Monthly Backup ZIP · {monthTabLabel(selectedMonth)}
+                  </button>
                   <button
                     className="data-menu-item"
                     disabled={isSaving}
@@ -6381,7 +6369,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                     Full Backup ZIP
                   </button>
                   <label className="data-menu-item file-button" role="menuitem">
-                    Restore ZIP (merge)
+                    Import Backup ZIP (choose month)
                     <input
                       accept="application/zip,.zip"
                       disabled={isSaving}
@@ -6390,7 +6378,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                     />
                   </label>
                   <label className="data-menu-item file-button" role="menuitem">
-                    Restore ZIP (replace)
+                    Replace from Backup ZIP
                     <input
                       accept="application/zip,.zip"
                       disabled={isSaving}
@@ -6501,9 +6489,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
         <section className="private-home-page" aria-label="Private journal home">
           <section className="private-home-hero">
             <div className="private-home-copy">
-              <p className="eyebrow">Command Center</p>
               <h2>Welcome back, Adalwolf.</h2>
-              <p className="home-lede">Clean review, fast logging, safe backups.</p>
               <div className="home-hero-actions">
                 <button className="primary-button compact" type="button" onClick={openNewTrade}>
                   New Trade
@@ -6729,7 +6715,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
         <>
       <section className="month-switcher" aria-label="Month navigation">
         <button className="nav-icon" type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>
-          &lt;
+          <ChevronLeft size={16} />
         </button>
         <nav className="month-tabs" aria-label="Month tabs">
           {monthTabs.map((month) => (
@@ -6746,7 +6732,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
           ))}
         </nav>
         <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
-          &gt;
+          <ChevronRight size={16} />
         </button>
         <button className="utility-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
           This month
@@ -6792,7 +6778,8 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
         ) : null}
       </section>
 
-      <section className="journal-filter-panel" aria-label="Journal filters">
+      <FilterDisclosure count={activeFilterCount} label="Journal filters">
+      <section className="journal-filter-panel">
         <div className="filter-panel-heading">
           <div>
             <p className="eyebrow">Journal Filters</p>
@@ -6898,8 +6885,9 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
           </label>
         </div>
       </section>
+      </FilterDisclosure>
 
-      <section className="metric-grid" aria-label={`Journal statistics for ${reportRange.label}`}>
+      <section className={`metric-grid ${isLoading ? "is-loading" : ""}`} aria-busy={isLoading} aria-label={`Journal statistics for ${reportRange.label}`}>
         <article className="metric-card primary-metric">
           <span>Net Actual R</span>
           <strong className={toneClass(stats.totalActual)}>{rValue(stats.totalActual)}</strong>
@@ -6955,7 +6943,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
         </article>
       </section>
 
-      {notice ? <p className="notice dashboard-notice">{notice}</p> : null}
+      {notice ? <p className="notice dashboard-notice" role="status">{notice}</p> : null}
       {backupReminderDue ? (
         <section className="backup-reminder-panel" aria-label="Backup reminder">
           <div>
@@ -7694,7 +7682,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   type="button"
                   onClick={() => moveAttachmentPreview(-1)}
                 >
-                  &lt;
+                  <ChevronLeft size={16} />
                 </button>
                 <button
                   className="cinematic-icon-button"
@@ -7703,7 +7691,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   type="button"
                   onClick={() => moveAttachmentPreview(1)}
                 >
-                  &gt;
+                  <ChevronRight size={16} />
                 </button>
                 <button
                   className="cinematic-icon-button"
@@ -7711,7 +7699,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   type="button"
                   onClick={() => setAttachmentZoom((current) => clamp(current - 0.25, 1, 2.5))}
                 >
-                  -
+                  <Minus size={16} />
                 </button>
                 <button className="cinematic-zoom-button" type="button" onClick={() => setAttachmentZoom(1)}>
                   {attachmentZoom === 1 ? "Fit" : `${Math.round(attachmentZoom * 100)}%`}
@@ -7722,7 +7710,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   type="button"
                   onClick={() => setAttachmentZoom((current) => clamp(current + 0.25, 1, 2.5))}
                 >
-                  +
+                  <Plus size={16} />
                 </button>
                 {attachmentPreview.sourceDate ? (
                   <button className="cinematic-text-button" type="button" onClick={openPreviewSourceDay}>
@@ -7733,7 +7721,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
                   Open
                 </a>
                 <button className="cinematic-icon-button" aria-label="Close screenshot viewer" type="button" onClick={closeAttachmentPreview}>
-                  X
+                  <X size={16} />
                 </button>
               </div>
             </div>
