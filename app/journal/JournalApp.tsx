@@ -13,10 +13,11 @@ import {
   useState,
 } from "react";
 import type { CSSProperties } from "react";
+import { buildMonthWindow } from "@/lib/month-window.js";
 import { useJournalTheme } from "./useJournalTheme";
 import JournalNavigation from "./JournalNavigation";
 import FilterDisclosure from "./FilterDisclosure";
-import { ChevronLeft, ChevronRight, Database, Minus, Moon, Plus, Sun, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Database, Minus, Moon, Plus, Sun, X } from "lucide-react";
 
 type BeHit = "Yes" | "No";
 
@@ -3958,28 +3959,13 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
 
   const monthTabs = useMemo(() => {
     const tradeCounts = new Map<string, number>();
-    const keys = new Set<string>();
-
-    for (let offset = -6; offset <= 6; offset += 1) {
-      keys.add(shiftMonth(selectedMonth, offset));
-    }
 
     trades.forEach((trade) => {
       const key = monthKey(trade.date);
-      keys.add(key);
       tradeCounts.set(key, (tradeCounts.get(key) ?? 0) + 1);
     });
 
-    keys.add(currentMonthKey());
-
-    const sortedKeys = [...keys].sort();
-    const selectedIndex = sortedKeys.indexOf(selectedMonth);
-    const orderedKeys =
-      selectedIndex >= 0
-        ? [...sortedKeys.slice(selectedIndex), ...sortedKeys.slice(0, selectedIndex)]
-        : sortedKeys;
-
-    return orderedKeys.map((key) => ({
+    return buildMonthWindow(selectedMonth).map((key) => ({
       count: tradeCounts.get(key) ?? 0,
       key,
       label: monthTabLabel(key),
@@ -3990,7 +3976,7 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
     selectedMonthTabRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
-      inline: "start",
+      inline: "center",
     });
   }, [monthTabs, selectedMonth]);
 
@@ -5949,8 +5935,9 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
           <label>
             First TP R
             <input
-              min="0.1"
-              step="0.1"
+              inputMode="decimal"
+              min="0.01"
+              step="0.01"
               type="number"
               value={draft.firstTpR}
               onChange={(event) => updateDraft("firstTpR", Number(event.target.value))}
@@ -5959,8 +5946,9 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
           <label>
             Max R
             <input
+              inputMode="decimal"
               min="0"
-              step="0.1"
+              step="0.01"
               type="number"
               value={draft.maxR}
               onChange={(event) => updateDraft("maxR", Number(event.target.value))}
@@ -5970,7 +5958,8 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
             Actual R
             <input
               disabled={draft.beHit === "No"}
-              step="0.1"
+              inputMode="decimal"
+              step="0.01"
               type="number"
               value={draft.actualR}
               onChange={(event) => updateDraft("actualR", Number(event.target.value))}
@@ -6734,9 +6723,22 @@ export default function Home({ initialView = "dashboard" }: { initialView?: Jour
         <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
           <ChevronRight size={16} />
         </button>
-        <button className="utility-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
-          This month
-        </button>
+        <div className="month-control-stack">
+          <label className="month-jump-control">
+            <CalendarDays size={15} aria-hidden="true" />
+            <span className="sr-only">Jump to month</span>
+            <input
+              aria-label="Jump to month"
+              className="month-jump-input"
+              type="month"
+              value={selectedMonth}
+              onChange={(event) => event.target.value && goToMonth(event.target.value)}
+            />
+          </label>
+          <button className="utility-button month-today-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
+            This month
+          </button>
+        </div>
       </section>
 
       <section className="report-range-panel" id="dashboard-overview" aria-label="Report range">

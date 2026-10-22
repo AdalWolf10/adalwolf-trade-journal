@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buildMonthWindow } from "@/lib/month-window.js";
 import { useJournalTheme } from "../useJournalTheme";
 import JournalNavigation from "../JournalNavigation";
 import FilterDisclosure from "../FilterDisclosure";
-import { ChevronLeft, ChevronRight, Moon, RefreshCw, Sun } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Moon, RefreshCw, Sun } from "lucide-react";
 
 type BeHit = "Yes" | "No";
 type ResultFilter = "all" | "flat" | "loss" | "win";
@@ -1006,39 +1007,24 @@ export default function QualityPageClient() {
 
   const monthTabs = useMemo(() => {
     const tradeCounts = new Map<string, number>();
-    const keys = new Set<string>();
-
-    for (let offset = -6; offset <= 6; offset += 1) {
-      keys.add(shiftMonth(selectedMonth, offset));
-    }
 
     trades.forEach((trade) => {
       const key = monthKey(trade.date);
-      keys.add(key);
       tradeCounts.set(key, (tradeCounts.get(key) ?? 0) + 1);
     });
-    dailyJournals.forEach((journal) => keys.add(monthKey(journal.date)));
-    keys.add(currentMonthKey());
 
-    const sortedKeys = [...keys].sort();
-    const selectedIndex = sortedKeys.indexOf(selectedMonth);
-    const orderedKeys =
-      selectedIndex >= 0
-        ? [...sortedKeys.slice(selectedIndex), ...sortedKeys.slice(0, selectedIndex)]
-        : sortedKeys;
-
-    return orderedKeys.map((key) => ({
+    return buildMonthWindow(selectedMonth).map((key) => ({
       count: tradeCounts.get(key) ?? 0,
       key,
       label: monthTabLabel(key),
     }));
-  }, [dailyJournals, selectedMonth, trades]);
+  }, [selectedMonth, trades]);
 
   useEffect(() => {
     selectedMonthTabRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
-      inline: "start",
+      inline: "center",
     });
   }, [monthTabs, selectedMonth]);
 
@@ -1191,9 +1177,22 @@ export default function QualityPageClient() {
         <button className="nav-icon" type="button" aria-label="Next month" onClick={() => moveMonth(1)}>
           <ChevronRight size={16} />
         </button>
-        <button className="utility-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
-          This month
-        </button>
+        <div className="month-control-stack">
+          <label className="month-jump-control">
+            <CalendarDays size={15} aria-hidden="true" />
+            <span className="sr-only">Jump to month</span>
+            <input
+              aria-label="Jump to month"
+              className="month-jump-input"
+              type="month"
+              value={selectedMonth}
+              onChange={(event) => event.target.value && goToMonth(event.target.value)}
+            />
+          </label>
+          <button className="utility-button month-today-button" type="button" onClick={() => goToMonth(currentMonthKey())}>
+            This month
+          </button>
+        </div>
       </section>
 
       <section className="quality-page-toolbar" aria-label="Trade quality range">

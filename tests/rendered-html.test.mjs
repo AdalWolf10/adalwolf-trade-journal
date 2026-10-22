@@ -5,6 +5,55 @@ import test from "node:test";
 const templateRoot = new URL("../", import.meta.url);
 const navigation = await readFile(new URL("../app/journal/JournalNavigation.tsx", import.meta.url), "utf8");
 
+test("builds a chronological seven-month ribbon without wrapping to old data", async () => {
+  let buildMonthWindow;
+  try {
+    ({ buildMonthWindow } = await import("../lib/month-window.js"));
+  } catch {
+    buildMonthWindow = undefined;
+  }
+
+  assert.equal(typeof buildMonthWindow, "function");
+  assert.deepEqual(buildMonthWindow("2027-04"), [
+    "2027-01",
+    "2027-02",
+    "2027-03",
+    "2027-04",
+    "2027-05",
+    "2027-06",
+    "2027-07",
+  ]);
+  assert.deepEqual(buildMonthWindow("2026-12"), [
+    "2026-09",
+    "2026-10",
+    "2026-11",
+    "2026-12",
+    "2027-01",
+    "2027-02",
+    "2027-03",
+  ]);
+});
+
+test("allows trade R values with two decimal places", async () => {
+  const journal = await readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8");
+
+  assert.equal((journal.match(/step="0\.01"/g) ?? []).length, 3);
+  assert.equal((journal.match(/inputMode="decimal"/g) ?? []).length, 3);
+  assert.doesNotMatch(journal, /step="0\.1"/);
+});
+
+test("stacks the month picker above the current-month shortcut", async () => {
+  const [journal, quality, styles] = await Promise.all([
+    readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/journal/quality/QualityPageClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/ui-refresh.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(journal, /className="month-control-stack"/);
+  assert.match(quality, /className="month-control-stack"/);
+  assert.match(styles, /\.month-control-stack\s*\{[^}]*grid-template-rows:\s*repeat\(2,/s);
+});
+
 test("keeps result colors in the compiled production stylesheet", async () => {
   const cssDirectory = new URL("../dist/server/_next/static/css/", import.meta.url);
   const cssFiles = (await readdir(cssDirectory)).filter((file) => file.endsWith(".css"));
