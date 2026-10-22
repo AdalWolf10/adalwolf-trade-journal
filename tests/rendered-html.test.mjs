@@ -15,6 +15,9 @@ test("keeps result colors in the compiled production stylesheet", async () => {
   assert.match(compiledCss, /\.trade-table td\.neutral\{color:var\(--amber\)\}/);
   assert.match(compiledCss, /\.weekday-result strong\.positive\{color:var\(--green\)\}/);
   assert.match(compiledCss, /\.weekday-result strong\.negative\{color:var\(--red\)\}/);
+  assert.match(compiledCss, /\.journal-workspace \.positive\{color:var\(--green\)\}/);
+  assert.match(compiledCss, /\.journal-workspace \.negative\{color:var\(--red\)\}/);
+  assert.match(compiledCss, /\.journal-workspace \.neutral\{color:var\(--amber\)\}/);
 });
 
 test("defines the exit strategy journal shell", async () => {

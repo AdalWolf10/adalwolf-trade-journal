@@ -74,6 +74,9 @@ button svg, a svg { flex-shrink: 0; }
 .positive { color: var(--green); }
 .negative { color: var(--red); }
 .neutral { color: var(--muted-strong); }
+.journal-workspace .positive { color: var(--green); }
+.journal-workspace .negative { color: var(--red); }
+.journal-workspace .neutral { color: var(--amber); }
 .journal-shell { display: grid; grid-template-columns: 216px minmax(0, 1fr); background: var(--background); }
 .journal-shell:has(.workspace-sidebar.is-collapsed) { grid-template-columns: 68px minmax(0, 1fr); }
 .journal-workspace { width: 100%; max-width: 1680px; padding: 20px 28px 40px; }
