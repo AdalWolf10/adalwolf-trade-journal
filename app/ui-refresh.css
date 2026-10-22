@@ -188,6 +188,12 @@ button svg, a svg { flex-shrink: 0; }
 .trade-table th { font-size: 10px; font-weight: 500; padding: 10px 8px; background: var(--panel-strong); }
 .trade-table td { font-size: 12px; padding: 12px 8px; font-variant-numeric: tabular-nums; background: transparent; }
 .trade-table td strong { font-weight: 500; }
+.trade-table td.positive { color: var(--green); }
+.trade-table td.negative { color: var(--red); }
+.trade-table td.neutral { color: var(--amber); }
+.weekday-result strong.positive { color: var(--green); }
+.weekday-result strong.negative { color: var(--red); }
+.weekday-result strong.neutral { color: var(--amber); }
 .trade-table .trade-details { min-width: 180px; }
 .sort-header { font-weight: 500; font-size: 10px; }
 .log-search-input { min-width: 0; width: 220px; max-width: 100%; min-height: 34px; border-radius: 6px; font-size: 12px; }

@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
 const navigation = await readFile(new URL("../app/journal/JournalNavigation.tsx", import.meta.url), "utf8");
+
+test("keeps result colors in the compiled production stylesheet", async () => {
+  const cssDirectory = new URL("../dist/server/_next/static/css/", import.meta.url);
+  const cssFiles = (await readdir(cssDirectory)).filter((file) => file.endsWith(".css"));
+  const compiledCss = (await Promise.all(cssFiles.map((file) => readFile(new URL(file, cssDirectory), "utf8")))).join("\n");
+
+  assert.match(compiledCss, /\.trade-table td\.positive\{color:var\(--green\)\}/);
+  assert.match(compiledCss, /\.trade-table td\.negative\{color:var\(--red\)\}/);
+  assert.match(compiledCss, /\.trade-table td\.neutral\{color:var\(--amber\)\}/);
+  assert.match(compiledCss, /\.weekday-result strong\.positive\{color:var\(--green\)\}/);
+  assert.match(compiledCss, /\.weekday-result strong\.negative\{color:var\(--red\)\}/);
+});
 
 test("defines the exit strategy journal shell", async () => {
   const [home, journal, layout] = await Promise.all([
