@@ -5,6 +5,21 @@ import test from "node:test";
 const templateRoot = new URL("../", import.meta.url);
 const navigation = await readFile(new URL("../app/journal/JournalNavigation.tsx", import.meta.url), "utf8");
 
+test("redirects an authenticated visitor from the login page to the journal", async () => {
+  const [home, loginForm] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/LoginForm.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(home, /import \{ isAuthenticated \} from "@\/lib\/auth"/);
+  assert.match(home, /if \(await isAuthenticated\(\)\)/);
+  assert.match(home, /redirect\("\/journal\/home"\)/);
+  assert.match(home, /<LoginForm \/>/);
+  assert.doesNotMatch(home, /"use client"/);
+  assert.match(loginForm, /"use client"/);
+  assert.match(loginForm, /\/api\/auth\/login/);
+});
+
 test("builds a chronological seven-month ribbon without wrapping to old data", async () => {
   let buildMonthWindow;
   try {
@@ -70,12 +85,13 @@ test("keeps result colors in the compiled production stylesheet", async () => {
 });
 
 test("defines the exit strategy journal shell", async () => {
-  const [home, journal, layout] = await Promise.all([
+  const [home, loginForm, journal, layout] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/LoginForm.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/journal/JournalApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   ]);
-  const source = home + journal + layout + navigation;
+  const source = home + loginForm + journal + layout + navigation;
 
   assert.match(source, /Welcome/);
   assert.match(source, /Please login to continue/);
